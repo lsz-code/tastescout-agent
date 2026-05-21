@@ -11,11 +11,25 @@ from app.db.base import Base
 if TYPE_CHECKING:
     from app.models.favorite_collection import FavoriteCollection
     from app.models.favorite_restaurant import FavoriteRestaurant
+    from app.models.reviews import Review
     from app.models.session import Session
     from app.models.user_memory import UserMemory
 
 
 class User(Base):
+    """
+    id:唯一标识用户
+    user_id:用户在认证系统中的唯一标识
+    username:用户名
+    avatar_url:用户头像URL
+    created_at:用户记录创建时间
+    updated_at:用户记录更新时间
+    favorite_collections:用户的收藏夹列表
+    favorite_restaurants:用户收藏的餐厅列表
+    memory:用户的记忆信息
+    sessions:用户的会话列表
+    reviews:用户的评论列表
+    """
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
@@ -49,6 +63,11 @@ class User(Base):
         uselist=False,
     )
     sessions: Mapped[list[Session]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    reviews: Mapped[list[Review]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
         passive_deletes=True,

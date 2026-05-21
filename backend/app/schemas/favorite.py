@@ -22,6 +22,7 @@ class FavoriteCollectionResponse(BaseModel):
 class AddFavoriteRestaurantRequest(BaseModel):
     user_id: str
     collection_id: int | None = None
+    collection_name: str | None = None
     poi_id: str
     name: str
     address: str | None = None

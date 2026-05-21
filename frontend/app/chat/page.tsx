@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useRouter } from "next/navigation";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/app-shell";
 import { ChatInput } from "@/components/chat/chat-input";
 import {
@@ -12,12 +13,15 @@ import { RestaurantMap } from "@/components/map/restaurant-map";
 import { ChatMessage } from "@/components/chat/message-bubble";
 import {
   addFavorite,
+  getFavoriteCollections,
   refreshLongTermMemory,
   sendAgentMessage,
+  upsertRestaurantFromRecommendation,
 } from "@/lib/api-client";
 import { useBrowserLocation } from "@/hooks/use-browser-location";
 import {
   AddFavoriteRequest,
+  FavoriteCollection,
   RestaurantItem,
 } from "@/lib/api-types";
 import { Button } from "@/components/ui/button";
@@ -30,6 +34,7 @@ import {
 import { useUserStore } from "@/stores/user-store";
 
 export default function ChatPage() {
+  const router = useRouter();
   const {
     userId,
     sessionId,
@@ -41,6 +46,7 @@ export default function ChatPage() {
     clearCurrentLocation,
     setLocationPermission,
   } = useUserStore();
+  const queryClient = useQueryClient();
   const browserLocation = useBrowserLocation();
   const conversationKey = getConversationKey(userId, sessionId);
   const messages = useChatStore(
@@ -56,6 +62,12 @@ export default function ChatPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [selectedPoiId, setSelectedPoiId] = useState<string | null>(null);
   const [mapOpen, setMapOpen] = useState(false);
+  const [favoriteTarget, setFavoriteTarget] = useState<RestaurantItem | null>(
+    null,
+  );
+  const [selectedFavoriteCollectionId, setSelectedFavoriteCollectionId] =
+    useState<number | null>(null);
+  const [openingPoiId, setOpeningPoiId] = useState<string | null>(null);
 
   const chatMutation = useMutation({
     mutationFn: sendAgentMessage,
@@ -85,6 +97,12 @@ export default function ChatPage() {
     },
   });
 
+  const favoriteCollectionsQuery = useQuery({
+    queryKey: ["favorite-collections", userId],
+    queryFn: () => getFavoriteCollections(userId),
+    enabled: Boolean(favoriteTarget),
+  });
+
   function handleSend(message: string) {
     setNotice(null);
     appendMessage(userId, sessionId, {
@@ -109,17 +127,46 @@ export default function ChatPage() {
   function handleNewSession() {
     setNotice(null);
     setFavoriteLoadingPoiId(null);
+    setFavoriteTarget(null);
     newSession();
   }
 
-  async function handleFavorite(restaurant: RestaurantItem) {
+  function handleFavorite(restaurant: RestaurantItem) {
     if (!restaurant.poi_id || favoriteLoadingPoiId) return;
+    setNotice(null);
+    setFavoriteTarget(restaurant);
+  }
+
+  async function handleOpenRestaurant(restaurant: RestaurantItem) {
+    if (!restaurant.poi_id || openingPoiId) return;
+
+    setOpeningPoiId(restaurant.poi_id);
+    setNotice(null);
+    try {
+      await upsertRestaurantFromRecommendation(restaurant);
+      router.push(`/restaurants/${encodeURIComponent(restaurant.poi_id)}`);
+    } catch {
+      setNotice("餐厅详情打开失败，请稍后再试。");
+    } finally {
+      setOpeningPoiId(null);
+    }
+  }
+
+  async function handleConfirmFavorite() {
+    const restaurant = favoriteTarget;
+    if (!restaurant?.poi_id || favoriteLoadingPoiId) return;
+
+    if (selectedFavoriteCollectionId == null) {
+      setNotice("请选择一个收藏夹。");
+      return;
+    }
 
     setNotice(null);
     setFavoriteLoadingPoiId(restaurant.poi_id);
 
     const payload: AddFavoriteRequest = {
       user_id: userId,
+      collection_id: selectedFavoriteCollectionId,
       poi_id: restaurant.poi_id,
       name: restaurant.name,
       address: restaurant.address,
@@ -142,11 +189,84 @@ export default function ChatPage() {
         next.add(restaurant.poi_id);
         return next;
       });
+      setFavoriteTarget(null);
       setNotice(
         response.already_exists
-          ? "这家餐厅已经在收藏夹里了"
+          ? `这家餐厅已经收藏过了：${restaurant.name}`
           : `已收藏：${restaurant.name}`,
       );
+
+      if (!response.already_exists) {
+        queryClient.setQueryData(
+          ["favorites", userId, selectedFavoriteCollectionId],
+          (current: unknown) => {
+            if (!Array.isArray(current)) return current;
+            const exists = current.some(
+              (item) =>
+                typeof item === "object" &&
+                item !== null &&
+                "poi_id" in item &&
+                item.poi_id === restaurant.poi_id,
+            );
+            if (exists) return current;
+
+            return [
+              {
+                id: response.favorite_id ?? Date.now(),
+                collection_id: selectedFavoriteCollectionId,
+                poi_id: restaurant.poi_id,
+                name: restaurant.name,
+                address: restaurant.address,
+                photo: restaurant.photo,
+                cuisine_type: restaurant.cuisine_type,
+                rating: restaurant.rating,
+                avg_price: restaurant.avg_price,
+                distance: restaurant.distance,
+                recommended_dishes: restaurant.recommended_dishes,
+                review_summary: restaurant.review_summary,
+                recommend_reason: restaurant.recommend_reason,
+                created_at: new Date().toISOString(),
+              },
+              ...current,
+            ];
+          },
+        );
+
+        queryClient.setQueryData(
+          ["favorite-collections", userId],
+          (current: unknown) => {
+            if (!Array.isArray(current)) return current;
+            return current.map((collection) => {
+              if (
+                typeof collection !== "object" ||
+                collection === null ||
+                !("id" in collection) ||
+                collection.id !== selectedFavoriteCollectionId
+              ) {
+                return collection;
+              }
+              const restaurantCount =
+                "restaurant_count" in collection &&
+                typeof collection.restaurant_count === "number"
+                  ? collection.restaurant_count
+                  : 0;
+              return {
+                ...collection,
+                restaurant_count: restaurantCount + 1,
+              };
+            });
+          },
+        );
+      }
+
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["favorite-collections", userId],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["favorites", userId],
+        }),
+      ]);
 
       refreshLongTermMemory(userId).catch((error) => {
         console.warn("刷新长期记忆失败", error);
@@ -215,7 +335,33 @@ export default function ChatPage() {
     setNotice(null);
     setMapOpen(false);
     setSelectedPoiId(null);
+    setFavoriteTarget(null);
+    setSelectedFavoriteCollectionId(null);
+    setOpeningPoiId(null);
   }, [userId, sessionId]);
+
+  useEffect(() => {
+    if (!favoriteTarget) return;
+
+    const collections = favoriteCollectionsQuery.data ?? [];
+    if (collections.length === 0) {
+      setSelectedFavoriteCollectionId(null);
+      return;
+    }
+
+    const selectedExists = collections.some(
+      (collection) => collection.id === selectedFavoriteCollectionId,
+    );
+    if (selectedExists) return;
+
+    const defaultCollection =
+      collections.find((collection) => collection.is_default) ?? collections[0];
+    setSelectedFavoriteCollectionId(defaultCollection.id);
+  }, [
+    favoriteCollectionsQuery.data,
+    favoriteTarget,
+    selectedFavoriteCollectionId,
+  ]);
 
   useEffect(() => {
     if (
@@ -289,6 +435,8 @@ export default function ChatPage() {
               favoritedPoiIds={favoritedPoiIds}
               favoriteLoadingPoiId={favoriteLoadingPoiId}
               onFavorite={handleFavorite}
+              onOpenRestaurant={handleOpenRestaurant}
+              openingPoiId={openingPoiId}
             />
           </div>
         </div>
@@ -331,6 +479,115 @@ export default function ChatPage() {
       >
         {hasMapRestaurants ? "查看地图" : "暂无地图"}
       </Button>
+
+      {favoriteTarget ? (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/30 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-3xl border border-border bg-white p-5 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-semibold tracking-tight">
+                  选择收藏夹
+                </h2>
+                <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                  将“{favoriteTarget.name}”加入到你选择的收藏夹。
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={Boolean(favoriteLoadingPoiId)}
+                onClick={() => setFavoriteTarget(null)}
+              >
+                关闭
+              </Button>
+            </div>
+
+            <div className="mt-5 space-y-3">
+              {favoriteCollectionsQuery.isLoading ? (
+                <ModalStateText>正在加载收藏夹...</ModalStateText>
+              ) : null}
+
+              {favoriteCollectionsQuery.error instanceof Error ? (
+                <ModalStateText>收藏夹加载失败，请检查后端服务。</ModalStateText>
+              ) : null}
+
+              {!favoriteCollectionsQuery.isLoading &&
+              !favoriteCollectionsQuery.error &&
+              (favoriteCollectionsQuery.data ?? []).length === 0 ? (
+                <ModalStateText>
+                  还没有收藏夹，可以先到“我的收藏”页面创建收藏夹。
+                </ModalStateText>
+              ) : null}
+
+              {(favoriteCollectionsQuery.data ?? []).map(
+                (collection: FavoriteCollection) => (
+                  <button
+                    key={collection.id}
+                    type="button"
+                    disabled={Boolean(favoriteLoadingPoiId)}
+                    className={`w-full rounded-2xl border px-4 py-3 text-left transition-all ${
+                      selectedFavoriteCollectionId === collection.id
+                        ? "border-black bg-neutral-50 shadow-sm"
+                        : "border-neutral-200 bg-white hover:bg-neutral-50"
+                    }`}
+                    onClick={() => setSelectedFavoriteCollectionId(collection.id)}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="min-w-0 truncate text-sm font-semibold">
+                        {collection.name}
+                      </span>
+                      {collection.is_default ? (
+                        <span className="shrink-0 rounded-full bg-black px-2.5 py-1 text-xs text-white">
+                          默认收藏夹
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      共 {collection.restaurant_count} 家餐厅
+                    </p>
+                    {collection.description ? (
+                      <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
+                        {collection.description}
+                      </p>
+                    ) : null}
+                  </button>
+                ),
+              )}
+            </div>
+
+            <div className="mt-5 flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={Boolean(favoriteLoadingPoiId)}
+                onClick={() => setFavoriteTarget(null)}
+              >
+                取消
+              </Button>
+              <Button
+                type="button"
+                disabled={
+                  Boolean(favoriteLoadingPoiId) ||
+                  selectedFavoriteCollectionId == null ||
+                  favoriteCollectionsQuery.isLoading
+                }
+                onClick={handleConfirmFavorite}
+              >
+                {favoriteLoadingPoiId ? "收藏中..." : "确认收藏"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </AppShell>
+  );
+}
+
+function ModalStateText({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm leading-6 text-muted-foreground">
+      {children}
+    </div>
   );
 }

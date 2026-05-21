@@ -3,8 +3,16 @@ import {
   AddFavoriteResponse,
   AgentChatRequest,
   AgentChatResponse,
+  CreateReviewRequest,
+  CreateFavoriteCollectionRequest,
+  CreateFavoriteCollectionResponse,
+  FavoriteCollection,
   FavoriteRestaurant,
   LongTermMemoryResponse,
+  RestaurantDetail,
+  RestaurantItem,
+  ReviewItem,
+  UpsertRestaurantRequest,
 } from "@/lib/api-types";
 
 const API_BASE_URL =
@@ -69,6 +77,41 @@ export function sendAgentMessage(payload: AgentChatRequest) {
   });
 }
 
+export function getRestaurantDetail(poiId: string) {
+  return request<RestaurantDetail>(`/restaurants/${encodeURIComponent(poiId)}`);
+}
+
+export function upsertRestaurant(payload: UpsertRestaurantRequest) {
+  return request<RestaurantDetail>("/restaurants", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function upsertRestaurantFromRecommendation(restaurant: RestaurantItem) {
+  return upsertRestaurant({
+    poi_id: restaurant.poi_id,
+    name: restaurant.name,
+    address: restaurant.address,
+    photo: restaurant.photo,
+    location: restaurant.location,
+    cuisine_type: restaurant.cuisine_type,
+    rating: restaurant.rating,
+    avg_price: restaurant.avg_price,
+    raw_data: restaurant.raw_data,
+  });
+}
+
+export function submitRestaurantReview(
+  poiId: string,
+  payload: CreateReviewRequest,
+) {
+  return request<ReviewItem>(`/restaurants/${encodeURIComponent(poiId)}/reviews`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function getShortTermMemory(sessionId: string) {
   return request<Record<string, unknown>>(`/memory/short-term/${sessionId}`);
 }
@@ -84,8 +127,30 @@ export function addFavorite(payload: AddFavoriteRequest) {
   });
 }
 
-export function getFavorites(userId: string): Promise<FavoriteRestaurant[]> {
+export function getFavoriteCollections(userId: string) {
   const params = new URLSearchParams({ user_id: userId });
+  return request<FavoriteCollection[]>(
+    `/favorite-collections?${params.toString()}`,
+  );
+}
+
+export function createFavoriteCollection(
+  payload: CreateFavoriteCollectionRequest,
+) {
+  return request<CreateFavoriteCollectionResponse>("/favorite-collections", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getFavorites(
+  userId: string,
+  collectionId?: number | null,
+): Promise<FavoriteRestaurant[]> {
+  const params = new URLSearchParams({ user_id: userId });
+  if (collectionId != null) {
+    params.set("collection_id", String(collectionId));
+  }
   return request<FavoriteRestaurant[]>(`/favorites?${params.toString()}`);
 }
 

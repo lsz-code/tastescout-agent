@@ -1,4 +1,11 @@
-from pydantic import BaseModel,Field
+from datetime import datetime
+from typing import Any
+
+from pydantic import BaseModel, Field, field_validator
+
+"""
+构造餐厅相关的Pydantic模型，用于API请求和响应的数据验证和序列化。
+"""
 
 class Location(BaseModel):
     longitude:float
@@ -51,3 +58,56 @@ class RestaurantSearchResponse(BaseModel):
     restaurants: list[RestaurantSearchItem]
     memory_used: bool
     message: str
+
+
+class UpsertRestaurantRequest(BaseModel):
+    poi_id: str
+    name: str
+    address: str | None = None
+    photo: str | None = None
+    location: dict[str, Any] | str | None = None
+    cuisine_type: str | None = None
+    rating: float | None = None
+    avg_price: int | None = None
+    raw_data: dict[str, Any] | None = None
+
+
+class CreateReviewRequest(BaseModel):
+    user_id: str
+    content: str
+    rating: float | None = Field(default=None, ge=1, le=5)
+
+    @field_validator("content")
+    @classmethod
+    def validate_content(cls, value: str) -> str:
+        content = value.strip()
+        if not content:
+            raise ValueError("评论内容不能为空")
+        return content
+
+
+class ReviewResponse(BaseModel):
+    id: int
+    restaurant_id: int
+    user_id: str
+    username: str | None = None
+    content: str
+    rating: float | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class RestaurantDetailResponse(BaseModel):
+    id: int
+    poi_id: str
+    name: str
+    address: str | None = None
+    photo: str | None = None
+    location: dict[str, Any] | str | None = None
+    cuisine_type: str | None = None
+    rating: float | None = None
+    avg_price: int | None = None
+    raw_data: dict[str, Any] | None = None
+    reviews: list[ReviewResponse] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime

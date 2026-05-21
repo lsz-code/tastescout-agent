@@ -46,6 +46,7 @@ class RestaurantSearchService:
         self.ranking_service = RankingService()
         self.short_term_memory = short_term_memory or get_short_term_memory()
 
+    #餐厅搜索主方法，根据用户输入的搜索条件和用户的长期记忆进行餐厅搜索、过滤和排序，并将搜索结果写入短期记忆供后续推荐使用。
     async def search(
         self,
         payload: RestaurantSearchRequest,
