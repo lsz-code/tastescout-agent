@@ -59,6 +59,8 @@ export function RecommendationPanel({
   favoritedPoiIds,
   favoriteLoadingPoiId,
   onFavorite,
+  onOpenRestaurant,
+  openingPoiId,
 }: {
   restaurants?: RestaurantItem[];
   selectedPoiId?: string | null;
@@ -68,6 +70,8 @@ export function RecommendationPanel({
   favoritedPoiIds?: Set<string>;
   favoriteLoadingPoiId?: string | null;
   onFavorite?: (restaurant: RestaurantItem) => Promise<void> | void;
+  onOpenRestaurant?: (restaurant: RestaurantItem) => Promise<void> | void;
+  openingPoiId?: string | null;
 }) {
   const restaurantItems = restaurants ?? [];
 
@@ -112,11 +116,17 @@ export function RecommendationPanel({
               key={restaurant.poi_id || `${restaurant.rank}-${restaurant.name}`}
               restaurant={restaurant}
               selected={selectedPoiId === restaurant.poi_id}
-              onClick={() => onSelectRestaurant?.(restaurant.poi_id)}
+              onClick={() => {
+                onSelectRestaurant?.(restaurant.poi_id);
+                onOpenRestaurant?.(restaurant);
+              }}
               showFavoriteButton
               onFavorite={() => onFavorite?.(restaurant)}
               isFavorited={favoritedPoiIds?.has(restaurant.poi_id)}
-              favoriteLoading={favoriteLoadingPoiId === restaurant.poi_id}
+              favoriteLoading={
+                favoriteLoadingPoiId === restaurant.poi_id ||
+                openingPoiId === restaurant.poi_id
+              }
             />
           ))}
         </div>

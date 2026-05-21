@@ -6,6 +6,8 @@ from fastapi import HTTPException, status
 from app.models.favorite_collection import FavoriteCollection
 from app.models.favorite_restaurant import FavoriteRestaurant
 from app.models.user import User
+from app.services.memory_service import MemoryService 
+
 from app.repositories.favorite_repository import FavoriteRepository
 from app.schemas.favorite import (
     AddFavoriteRestaurantRequest,
@@ -15,6 +17,7 @@ from app.schemas.favorite import (
     FavoriteCollectionResponse,
     FavoriteRestaurantResponse,
 )
+from app.schemas.memory import RefreshLongTermMemoryResponse
 
 
 class FavoriteService:
@@ -104,12 +107,12 @@ class FavoriteService:
                 recommend_reason=payload.recommend_reason,
                 raw_data=payload.raw_data,
             )
-            #if we want to trigger memory refresh after favorite changes, 
-            # we can do it here.
-            # But we can't make the error of resfresh action affect the favorite adding process, 
-            # so we should make a separate async function for that.
             #这里先触发修改长期记忆的函数，但不等待它完成，也不让它的错误影响收藏添加的流程
-            await self._on_favorite_changed(user)
+            refresh_response = await self._on_favorite_changed(user)
+            if not refresh_response.success:
+                # 这里可以记录日志，说明长期记忆刷新失败了，但不影响收藏添加的结果
+                print(f"Warning: Memory refresh failed after adding favorite. Message: {refresh_response.message}")
+            
             await self.db.commit()
             #这里要等数据库提交成功后再刷新对象
             await self.db.refresh(favorite)
@@ -238,9 +241,11 @@ class FavoriteService:
         return collection
 
     #通用工具函数，当收藏夹发生变化时，触发记忆更新
-    async def _on_favorite_changed(self, user: User) -> None:
-        # TODO: Trigger Memory Refresh after favorite changes.
-        return None
+    async def _on_favorite_changed(self, user: User) -> RefreshLongTermMemoryResponse:
+        # Trigger Memory Refresh after favorite changes.
+        MemService = MemoryService(self.db)
+        return await MemService.refresh_long_term_memory(user_id=user.user_id)
+
 
     #构建收藏夹反馈格式
     def _build_collection_response(

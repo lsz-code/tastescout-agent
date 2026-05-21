@@ -123,7 +123,7 @@ class AgentWorkflowNodes:
     #参数提取
     async def extract_slots(self, state: AgentState) -> dict[str, Any]:
         if state.get("intent") != "search_restaurants":
-            return {}
+            return {"search_slots": state.get("search_slots")}
 
         message = state.get("message") or ""
         short_term_memory = state.get("short_term_memory", {})
@@ -143,7 +143,7 @@ class AgentWorkflowNodes:
 
     async def check_slots(self, state: AgentState) -> dict[str, Any]:
         if state.get("intent") != "search_restaurants":
-            return {}
+            return {"missing_slots": state.get("missing_slots", [])}
 
         message = state.get("message") or ""
         if self._is_reroll_intent(message):

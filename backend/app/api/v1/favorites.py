@@ -47,7 +47,7 @@ async def add_favorite_restaurant(
     db: AsyncSession = Depends(get_db),
 ) -> AddFavoriteRestaurantResponse:
     service = FavoriteService(db)
-    return await service.add_favorite(payload)
+    return await service.add_favorite(payload=payload)
 
 #查询收藏的所有餐厅
 @router.get("/favorites", response_model=list[FavoriteRestaurantResponse])
@@ -62,7 +62,7 @@ async def list_favorite_restaurants(
         collection_id=collection_id,
     )
 
-
+#删除收藏夹
 @router.delete("/favorites/{favorite_id}", response_model=DeleteFavoriteResponse)
 async def delete_favorite_restaurant(
     favorite_id: int,
@@ -74,3 +74,5 @@ async def delete_favorite_restaurant(
         user_id=user_id,
         favorite_id=favorite_id,
     )
+
+
