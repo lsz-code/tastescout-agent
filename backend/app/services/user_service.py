@@ -9,21 +9,24 @@ class UserService:
         self.db = db
         self.user_repository = UserRepository(db)
 
+    #用户初始化
     async def bootstrap_user(
         self,
         payload: UserBootstrapRequest,
     ) -> UserBootstrapResponse:
         try:
+            # 1. 检查用户是否存在
             user = await self.user_repository.get_by_user_id(payload.user_id)
             is_new_user = user is None
 
-            if user is None:
+            if is_new_user:
                 user = await self.user_repository.create_user(
                     user_id=payload.user_id,
                     username=payload.username,
                     avatar_url=payload.avatar_url,
                 )
-
+            
+            # 2. 确保用户有默认收藏夹和记忆
             default_collection = await self.user_repository.get_default_collection(user)
             if default_collection is None:
                 default_collection = (

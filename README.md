@@ -455,3 +455,26 @@ route_by_intent
 18.3 多轮追问
 →
 18.2 地图可视化
+
+完成向SKILL.md的转换
+新架构
+API 层
+只负责 HTTP 入参出参
+
+AgentService
+只负责启动 AgentWorkflow
+
+AgentWorkflow
+只负责编排节点和路由
+
+AgentWorkflowNodes
+只负责通用 Agent 步骤：load memory、classify intent、execute skill、generate response
+
+Skill
+负责一个 Agent 能力的参数准备、执行、结果格式化
+
+Service
+负责真实业务逻辑：搜索、收藏、记忆刷新、排序
+
+Repository/MCP/Memory
+负责数据和外部服务访问

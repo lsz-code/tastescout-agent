@@ -14,6 +14,7 @@ class AgentService:
         self.db = db
         self.short_term_memory = short_term_memory
 
+    #作为Agent功能的主入口，处理用户消息并返回Agent的回复、意图、工具调用等信息
     async def chat(self, payload: AgentChatRequest) -> AgentChatResponse:
         workflow = AgentWorkflow(
             db=self.db,
