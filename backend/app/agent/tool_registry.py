@@ -127,7 +127,7 @@ async def refresh_user_memory_handler(
 
 TOOLS: dict[str, dict[str, Any]] = {
     "search_restaurants": {
-        "description": "按用户位置、关键词和偏好搜索餐厅。内部会经过 geocode、MCP search、place_detail、distance 计算、ranking 和 short-term memory。",
+        "description": "按用户位置、地址、店名、关键词和偏好搜索餐厅。菜系不是必填项；没有关键词时默认搜索美食。用户找具体店名时，把店名放入 keyword，不要强制填 cuisine。",
         "parameters": {
             "type": "object",
             "properties": {

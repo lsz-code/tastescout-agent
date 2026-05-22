@@ -42,6 +42,7 @@ class AgentWorkflow:
         workflow.add_node("show_favorites", self.nodes.show_favorites)
         workflow.add_node("get_memory", self.nodes.get_memory)
         workflow.add_node("refresh_memory", self.nodes.refresh_memory)
+        workflow.add_node("casual_chat", self.nodes.casual_chat)
         workflow.add_node("fallback", self.nodes.fallback)
         workflow.add_node("generate_response", self.nodes.generate_response)
 
@@ -60,6 +61,7 @@ class AgentWorkflow:
                 "show_favorites": "show_favorites",
                 "get_memory": "get_memory",
                 "refresh_memory": "refresh_memory",
+                "casual_chat": "casual_chat",
                 "fallback": "fallback",
             },
         )
@@ -70,6 +72,7 @@ class AgentWorkflow:
         workflow.add_edge("show_favorites", "generate_response")
         workflow.add_edge("get_memory", "generate_response")
         workflow.add_edge("refresh_memory", "generate_response")
+        workflow.add_edge("casual_chat", "generate_response")
         workflow.add_edge("fallback", "generate_response")
         workflow.add_edge("generate_response", END)
 
@@ -90,6 +93,7 @@ class AgentWorkflow:
             "location": location,
             "location_label": location_label,
             "intent": None,
+            "llm_parsed_context": None,
             "search_slots": None,
             "missing_slots": [],
             "short_term_memory": {},
@@ -125,5 +129,8 @@ class AgentWorkflow:
 
         if intent == "refresh_user_memory":
             return "refresh_memory"
+
+        if intent == "casual_chat":
+            return "casual_chat"
 
         return "fallback"

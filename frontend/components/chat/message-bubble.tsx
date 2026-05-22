@@ -8,6 +8,7 @@ export type ChatMessage = {
   toolCalls?: AgentToolCall[];
   needsFollowup?: boolean;
   missingSlots?: string[];
+  casualChat?: boolean;
 };
 
 export function MessageBubble({
@@ -21,6 +22,8 @@ export function MessageBubble({
 }) {
   const isUser = message.role === "user";
   const showFollowupActions = !isUser && message.needsFollowup;
+  const showCuisineQuickReplies =
+    showFollowupActions && message.missingSlots?.includes("cuisine");
 
   return (
     <div className={cn("flex", isUser ? "justify-end" : "justify-start")}>
@@ -35,7 +38,7 @@ export function MessageBubble({
           )}
         >
           {message.content}
-          {!isUser && message.toolCalls?.length ? (
+          {!isUser && !message.casualChat && message.toolCalls?.length ? (
             <div className="mt-3 border-t border-neutral-200 pt-2 text-xs text-muted-foreground">
               已调用工具：
               {message.toolCalls.map((tool) => tool.tool_name).join("、")}
@@ -43,16 +46,18 @@ export function MessageBubble({
           ) : null}
           {showFollowupActions ? (
             <div className="mt-3 flex flex-wrap gap-2 border-t border-neutral-200 pt-3">
-              {["川菜", "火锅", "烧烤", "日料"].map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => onQuickReply?.(item)}
-                  className="rounded-full bg-neutral-100 px-3 py-1 text-xs text-neutral-700 hover:bg-neutral-200"
-                >
-                  {item}
-                </button>
-              ))}
+              {showCuisineQuickReplies
+                ? ["川菜", "火锅", "烧烤", "日料"].map((item) => (
+                    <button
+                      key={item}
+                      type="button"
+                      onClick={() => onQuickReply?.(item)}
+                      className="rounded-full bg-neutral-100 px-3 py-1 text-xs text-neutral-700 hover:bg-neutral-200"
+                    >
+                      {item}
+                    </button>
+                  ))
+                : null}
               {message.missingSlots?.includes("location") ? (
                 <button
                   type="button"
