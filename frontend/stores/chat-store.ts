@@ -11,6 +11,7 @@ export type PersistedChatMessage = {
   toolCalls?: AgentToolCall[];
   needsFollowup?: boolean;
   missingSlots?: string[];
+  casualChat?: boolean;
 };
 
 export const EMPTY_CHAT_MESSAGES: PersistedChatMessage[] = [];

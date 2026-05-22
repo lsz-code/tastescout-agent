@@ -72,19 +72,21 @@ export default function ChatPage() {
   const chatMutation = useMutation({
     mutationFn: sendAgentMessage,
     onSuccess: (response) => {
+      const isCasualChat = response.data?.casual_chat === true;
       appendMessage(userId, sessionId, {
         id: `assistant-${Date.now()}`,
         role: "assistant",
         content: response.reply,
         createdAt: new Date().toISOString(),
-        restaurants: response.data?.needs_followup
+        restaurants: isCasualChat || response.data?.needs_followup
           ? undefined
           : response.data?.restaurants ?? [],
-        toolCalls: response.tool_calls,
+        toolCalls: isCasualChat ? undefined : response.tool_calls,
         needsFollowup: Boolean(response.data?.needs_followup),
         missingSlots: Array.isArray(response.data?.missing_slots)
           ? (response.data?.missing_slots as string[])
           : undefined,
+        casualChat: isCasualChat,
       });
     },
     onError: () => {
