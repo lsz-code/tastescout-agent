@@ -382,66 +382,74 @@ export default function ChatPage() {
 
   return (
     <AppShell>
-      <div className="flex min-h-[620px] flex-col xl:h-[calc(100vh-120px)] xl:overflow-hidden">
-        <div className="mb-5 flex shrink-0 flex-col justify-between gap-4 sm:flex-row sm:items-end">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">智能美食推荐</h1>
-            <p className="mt-2 text-sm text-muted-foreground">
-              告诉我你的位置、想吃的菜系、预算和用餐场景，我会结合你的饮食记忆进行推荐。
-            </p>
+      <div className="grid h-[calc(100vh-2rem)] min-h-0 gap-4 overflow-hidden xl:grid-cols-[minmax(0,1fr)_560px]">
+        <section className="warm-panel flex h-full min-h-0 flex-col overflow-hidden rounded-[22px]">
+          <div className="flex shrink-0 items-start justify-between gap-4 border-b border-orange-100/70 px-8 py-7">
+            <div>
+              <h1 className="text-3xl font-bold tracking-tight text-amber-950">
+                今天想吃点什么？
+                <span className="ml-2 text-xl text-orange-400">✨</span>
+              </h1>
+              <p className="mt-3 text-sm text-muted-foreground">
+                告诉我你的口味、心情或忌口，我来帮你推荐餐厅吧～
+              </p>
+            </div>
+            <div className="flex shrink-0 gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={chatMutation.isPending}
+                onClick={handleReroll}
+                className="rounded-full"
+              >
+                换一批
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={handleNewSession}
+                className="rounded-full"
+              >
+                新会话
+              </Button>
+            </div>
           </div>
-          <div className="flex gap-2">
-            <Button
-              type="button"
-              variant="secondary"
-              disabled={chatMutation.isPending}
-              onClick={handleReroll}
-            >
-              换一批
-            </Button>
-            <Button type="button" variant="secondary" onClick={handleNewSession}>
-              新会话
-            </Button>
-          </div>
-        </div>
         {notice ? (
-          <div className="mb-5 shrink-0 rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-700 shadow-sm">
+          <div className="mx-5 mt-5 shrink-0 rounded-2xl border border-orange-100 bg-orange-50 px-4 py-3 text-sm text-amber-800 shadow-sm">
             {notice}
           </div>
         ) : null}
-        <div className="grid min-h-0 flex-1 gap-5 xl:grid-cols-[minmax(0,1fr)_520px]">
-          <div className="flex min-h-[620px] flex-col overflow-hidden rounded-2xl border border-border bg-white shadow-soft xl:sticky xl:top-6 xl:h-full xl:min-h-0">
-            <ChatWindow
-              messages={messages as ChatMessage[]}
-              loading={chatMutation.isPending}
-              onQuickReply={handleSend}
-              onRequestLocation={handleRequestLocation}
-            />
-            <ChatInput
-              disabled={chatMutation.isPending}
-              locationStatusText={getLocationStatusText()}
-              locating={browserLocation.loading || locationPermission === "requesting"}
-              hasLocation={Boolean(currentLocation)}
-              onRequestLocation={handleRequestLocation}
-              onClearLocation={handleClearLocation}
-              onSend={handleSend}
-            />
-          </div>
-          <div className="min-h-0 xl:h-full xl:overflow-hidden">
-            <RecommendationPanel
-              restaurants={latestRestaurants}
-              selectedPoiId={selectedPoiId}
-              onSelectRestaurant={setSelectedPoiId}
-              hasRecommendation={hasRecommendation}
-              loading={chatMutation.isPending}
-              favoritedPoiIds={favoritedPoiIds}
-              favoriteLoadingPoiId={favoriteLoadingPoiId}
-              onFavorite={handleFavorite}
-              onOpenRestaurant={handleOpenRestaurant}
-              openingPoiId={openingPoiId}
-            />
-          </div>
-        </div>
+          <ChatWindow
+            messages={messages as ChatMessage[]}
+            loading={chatMutation.isPending}
+            onQuickReply={handleSend}
+            onRequestLocation={handleRequestLocation}
+          />
+          <ChatInput
+            disabled={chatMutation.isPending}
+            locationStatusText={getLocationStatusText()}
+            locating={browserLocation.loading || locationPermission === "requesting"}
+            hasLocation={Boolean(currentLocation)}
+            onRequestLocation={handleRequestLocation}
+            onClearLocation={handleClearLocation}
+            onSend={handleSend}
+          />
+        </section>
+
+        <aside className="h-full min-h-0 overflow-hidden">
+          <RecommendationPanel
+            restaurants={latestRestaurants}
+            selectedPoiId={selectedPoiId}
+            onSelectRestaurant={setSelectedPoiId}
+            hasRecommendation={hasRecommendation}
+            loading={chatMutation.isPending}
+            favoritedPoiIds={favoritedPoiIds}
+            favoriteLoadingPoiId={favoriteLoadingPoiId}
+            onFavorite={handleFavorite}
+            onOpenRestaurant={handleOpenRestaurant}
+            openingPoiId={openingPoiId}
+          />
+        </aside>
       </div>
 
       {mapOpen ? (
