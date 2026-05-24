@@ -1,18 +1,14 @@
 import { ReactNode } from "react";
-import { AppHeader } from "@/components/layout/app-header";
 import { AppSidebar } from "@/components/layout/app-sidebar";
 
 export function AppShell({ children }: { children: ReactNode }) {
   return (
-    <div className="min-h-screen bg-neutral-100">
-      <div className="flex min-h-screen">
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(255,237,213,0.95),transparent_34%),linear-gradient(135deg,#fff8f0_0%,#fffdfa_48%,#fff2e0_100%)] p-3 md:p-4">
+      <div className="flex min-h-[calc(100vh-1.5rem)] gap-4 md:min-h-[calc(100vh-2rem)]">
         <AppSidebar />
-        <div className="flex min-w-0 flex-1 flex-col">
-          <AppHeader />
-          <main className="flex-1 px-4 py-5 md:px-8 md:py-8">
-            <div className="mx-auto max-w-7xl">{children}</div>
-          </main>
-        </div>
+        <main className="min-w-0 flex-1">
+          <div className="mx-auto h-full max-w-[1580px]">{children}</div>
+        </main>
       </div>
     </div>
   );
