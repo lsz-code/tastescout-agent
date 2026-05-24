@@ -86,6 +86,7 @@ class AgentWorkflow:
         location: dict[str, Any] | None = None,
         location_label: str | None = None,
     ) -> AgentState:
+        #抛弃了之前直接按规则化
         initial_state: AgentState = {
             "user_id": user_id,
             "session_id": session_id,

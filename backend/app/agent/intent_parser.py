@@ -159,6 +159,7 @@ class IntentParser:
             "想吃点开心的",
             "需要一点安慰",
         ]
+        #如果没有说帮助找什么餐厅或者其他工具相关的关键词，但说了一些比较随意的话，就认为这是在进行闲聊
         if any(phrase in message for phrase in casual_phrases):
             return not any(keyword in message for keyword in search_keywords)
 

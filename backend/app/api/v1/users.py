@@ -8,7 +8,7 @@ from app.services.user_service import UserService
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
-
+#用户初始化
 @router.post("/bootstrap", response_model=UserBootstrapResponse)
 async def bootstrap_user(
     payload: UserBootstrapRequest,
