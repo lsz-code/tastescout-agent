@@ -12,8 +12,10 @@ from app.schemas.memory import (
     LongTermMemoryData,
     LongTermMemoryResponse,
     PricePreference,
-    RefreshLongTermMemoryResponse,
+    RefreshLongTermMemoryResponse,\
 )
+
+from app.services.memory_cot_service import MemoryCOTService
 
 class MemoryService:
     TASTE_KEYWORDS = ["偏辣", "清淡", "重口味", "性价比高", "分量大", "环境好"]
@@ -22,6 +24,7 @@ class MemoryService:
         self.db = db
         #在service层中实例化repository层，repository层负责访问数据库
         self.memory_repository = MemoryRepository(db)
+        self.memory_cot_service = MemoryCOTService()
     
     #获取长期记忆，构建搜索上下文
     async def get_long_term_memory(self, user_id: str) -> LongTermMemoryResponse:
@@ -59,9 +62,20 @@ class MemoryService:
             favorites = await self.memory_repository.get_favorite_restaurants_by_user_id(
                 user.id
             )
+            #将用户评论，规则总结结果和收藏夹数据一起传给LLM，生成增强版长期记忆总结结果
+            reviews = await self.memory_repository.get_reviews_by_user_id(user.id)
+
+            baseline_memory_data = self._summarize_favorites(favorites, memory)
+
+            llm_memory_data = await self.memory_cot_service.summarize_user_memory(
+                favorites=favorites,
+                reviews=reviews,
+                baseline_memory=baseline_memory_data,
+                old_memory=memory,
+            )
 
             #根据收藏夹总结用户偏好，构建长期记忆数据
-            memory_data = self._summarize_favorites(favorites, memory)
+            memory_data = llm_memory_data or baseline_memory_data
 
             #更新用户长期记忆
             memory = await self.memory_repository.update_user_memory(
