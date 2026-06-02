@@ -9,7 +9,7 @@ from app.memory.short_term import ShortTermMemory
 from app.schemas.memory import LongTermMemoryData
 from app.services.memory_service import MemoryService
 from app.workflows.agent_state import AgentState
-
+from app.agent.llm_slot_planner import LLMSlotPlanner
 
 class AgentWorkflowNodes:
     def __init__(
@@ -26,6 +26,7 @@ class AgentWorkflowNodes:
         self.agent_llm_client = agent_llm_client or AgentLLMClient()
         self.intent_parser = intent_parser or IntentParser()
         self.tool_registry = tool_registry or default_tool_registry
+        self.llm_slot_planner = LLMSlotPlanner(self.agent_llm_client)
 
     #加载长短期记忆，提供给后续节点使用，同时处理记忆加载失败的情况，保证agent的鲁棒性。
     async def load_memory(self, state: AgentState) -> dict[str, Any]:
@@ -67,7 +68,7 @@ class AgentWorkflowNodes:
         missing_error = self._missing_required_field(state)
         if missing_error:
             return {
-                "intent": "fallback",
+                "intent": "fallback", 
                 "planned_tool_args": {},
                 "error": missing_error,
             }
@@ -207,20 +208,123 @@ class AgentWorkflowNodes:
     
     #按槽位提取参数
     async def extract_slots(self, state: AgentState) -> dict[str, Any]:
+        """
+        提取餐厅搜索槽位。
+
+        流程：
+        1. 如果不是搜索意图，不做槽位提取。
+        2. 先使用现有规则逻辑提取 search_slots。
+        3. 再使用 LLMSlotPlanner 做语义补充。
+        4. 合并规则槽位和 LLM 槽位，规则槽位优先，LLM 只补缺失。
+        5. LLM 失败时完全回退规则槽位。
+        """
         if state.get("intent") != "search_restaurants":
             return {"search_slots": state.get("search_slots")}
+        
+        rule_result = self.tool_registry.extract_slots("search_restaurants", state)
+        rule_slots = rule_result.get("search_slots") or {}
 
-        return self.tool_registry.extract_slots("search_restaurants", state)
+        llm_slot_plan = await self.llm_slot_planner.plan_search_slots(
+            message=state.get("message") or "",
+            rule_slots=rule_slots,
+            request_location=state.get("location"),
+            short_term_memory=state.get("short_term_memory", {}),
+            long_term_memory=state.get("long_term_memory", {}),
+        )
+
+        if not llm_slot_plan:
+            return {
+                "search_slots": rule_slots,
+                "llm_slot_plan": None,
+            }
+    
+        llm_slots = llm_slot_plan.get("slots") or {}
+        merged_slots = {
+            **llm_slots,
+            **rule_slots,
+        }
+
+        return {
+            "search_slots": merged_slots,
+            "llm_slot_plan": llm_slot_plan
+        }
 
     #检查参数完整性，判断是否需要进行补问
     async def check_slots(self, state: AgentState) -> dict[str, Any]:
+        """
+        检查餐厅搜索槽位是否完整。
+
+        流程：
+        1. 先使用现有规则 check_slots。
+        2. 如果 LLM slot plan 明确给出 missing_slots，则结合 LLM 结果。
+        3. 如果 LLM 认为不需要追问，则允许用默认槽位继续搜索。
+        4. 如果 LLM 不可用，则完全使用规则结果。
+        """
         if state.get("intent") != "search_restaurants":
             return {"missing_slots": state.get("missing_slots", [])}
 
-        return self.tool_registry.check_slots("search_restaurants", state)
+        rule_result = self.tool_registry.check_slots("search_restaurants", state)
+        rule_missing_slots = rule_result.get("missing_slots", [])
+
+        llm_slot_plan = state.get("llm_slot_plan")
+        if not isinstance(llm_slot_plan, dict):
+            return {"missing_slots": rule_missing_slots}
+
+        #如果LLM明确指出不需要追问了，就直接用空的missing_slots覆盖规则结果，允许继续搜索。
+        llm_missing_slots = llm_slot_plan.get("missing_slots")
+        if not isinstance(llm_missing_slots, list):
+            return {"missing_slots": rule_missing_slots}
+
+        #LLM给出了明确的missing_slots列表，但又说不需要追问了，这种矛盾情况也以不追问为准，允许继续搜索。
+        should_ask_followup = bool(llm_slot_plan.get("should_ask_followup"))
+        if not should_ask_followup:
+            return {"missing_slots": []}
+
+        normalized_missing_slots = [
+            item
+            for item in llm_missing_slots
+            if item in {"location", "cuisine"}
+        ]
+
+        return {
+            "missing_slots": normalized_missing_slots or rule_missing_slots,
+        }
 
     #进行多轮追问，然后将用户的回答整合到参数中，直到参数完整或者用户放弃。
     async def ask_followup(self, state: AgentState) -> dict[str, Any]:
+        """
+        生成多轮追问回复。
+
+        如果 LLM slot plan 已经生成 followup_question，则优先使用它。
+        否则回退到 tool_registry 里的规则追问逻辑。
+        """
+        llm_slot_plan = state.get("llm_slot_plan")
+        if isinstance(llm_slot_plan, dict):
+            followup_question = llm_slot_plan.get("followup_question")
+            if isinstance(followup_question, str) and followup_question.strip():
+                slots = state.get("search_slots") or {}
+                missing_slots = state.get("missing_slots") or []
+                session_id = state.get("session_id")
+
+                if session_id:
+                    await self.short_term_memory.update(
+                        session_id,
+                        {
+                            "pending_search_slots": slots,
+                            "missing_slots": missing_slots,
+                            "last_intent": "ask_followup",
+                        },
+                    )
+
+                return {
+                    "reply": followup_question.strip(),
+                    "data": {
+                        "needs_followup": True,
+                        "missing_slots": missing_slots,
+                        "partial_slots": slots,
+                    },
+                }
+
         return await self.tool_registry.ask_followup(
             "search_restaurants",
             state,

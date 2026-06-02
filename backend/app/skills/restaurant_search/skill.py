@@ -107,6 +107,11 @@ class RestaurantSearchSkill(Skill):
             normalized.pop("address", None)
 
         self._apply_search_slots(normalized, state.get("search_slots") or {})
+
+        #让浏览器的地址定位优先级变得最高
+        if normalized.get("location") is not None:
+                normalized.pop("address", None)
+
         self._normalize_search_arguments(normalized, message)
 
         return normalized

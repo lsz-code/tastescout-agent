@@ -9,6 +9,7 @@ class AgentState(TypedDict, total=False):
     location_label: str | None
     intent: str | None
     llm_parsed_context: dict[str, Any] | None
+    llm_slot_plan: dict[str, Any] | None
     search_slots: dict[str, Any] | None
     missing_slots: list[str]
     planned_tool_args: dict[str, Any]
