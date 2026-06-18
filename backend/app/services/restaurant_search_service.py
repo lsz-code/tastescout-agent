@@ -57,13 +57,18 @@ class RestaurantSearchService:
 
         session_memory = await self._get_session_memory(payload.session_id)
 
-        #获取餐厅唯一ID
+        #获取过去推荐过的所有餐厅的唯一ID
         recommended_poi_ids = self._as_str_list(
             session_memory.get("recommended_poi_ids")
         )
+
+        #根据文本位置解析出经纬度坐标，如果文本位置不存在或者解析失败，则使用经纬度位置，
+        # 如果两者都没有，则无法进行基于位置的搜索
         search_location = await self._resolve_location(payload)
 
         restaurants = await self._search_restaurants(payload, search_location)
+
+        #根据餐厅唯一ID去重餐厅列表，避免重复的餐厅出现在搜索结果里
         restaurants = self._dedupe_by_poi_id(restaurants)
 
         #收集餐厅详情
@@ -72,7 +77,7 @@ class RestaurantSearchService:
             user_location=search_location,
         )
 
-        #过滤餐厅
+        #过滤已推荐过的重复餐厅
         restaurants = self._filter_recommended_restaurants(
             restaurants=restaurants,
             recommended_poi_ids=set(recommended_poi_ids),
@@ -192,9 +197,12 @@ class RestaurantSearchService:
 
             detail = detail_response.restaurant.model_dump()
             merged = self._merge_detail(restaurant, detail)
+            #计算距离
             enhanced.append(self._with_calculated_distance(merged, user_location))
 
         return enhanced
+    
+    
     #合并信息
     def _merge_detail(
         self,
@@ -329,6 +337,11 @@ class RestaurantSearchService:
             existing_recommended_poi_ids=existing_recommended_poi_ids,
             current_poi_ids=current_poi_ids,
         )
+
+        #更新到短期记忆中的信息有：
+        #用户id、当前搜索使用的位置文本和经纬度、当前搜索关键词、当前搜索结果的候选餐厅列表、历史推荐过的餐厅id列表、
+        # 当前搜索的上下文信息（位置文本、经纬度、关键词、城市、搜索半径、搜索结果数量限制、其他过滤条件）、
+        # 用户的长期记忆中与餐厅相关的信息（口味偏好、喜欢的菜系等）
         await self.short_term_memory.update(
             payload.session_id,
             {
@@ -336,12 +349,16 @@ class RestaurantSearchService:
                 "current_address": payload.address,
                 "current_location": location,
                 "current_search_keyword": payload.keyword,
+                "current_search_query": payload.keyword,
+                "current_search_type": self._infer_search_type(payload),
                 "current_candidates": candidates,
                 "recommended_poi_ids": recommended_poi_ids,
                 "last_search_context": {
                     "address": payload.address,
                     "location": location,
                     "keyword": payload.keyword,
+                    "search_query": payload.keyword,
+                    "search_type": self._infer_search_type(payload),
                     "city": payload.city,
                     "radius": payload.radius,
                     "limit": payload.limit,
@@ -385,6 +402,16 @@ class RestaurantSearchService:
             or memory.price_preference.min_price is not None
             or memory.price_preference.max_price is not None
         )
+
+    @staticmethod
+    def _infer_search_type(payload: RestaurantSearchRequest) -> str:
+        filters = payload.filters.model_dump() if payload.filters else {}
+        keyword = (payload.keyword or "").strip()
+        if not keyword or keyword in {"美食", "餐厅", "饭店", "吃饭", "吃的", "好吃的"}:
+            return "generic"
+        if filters.get("cuisine") == keyword:
+            return "cuisine"
+        return "keyword"
 
     #根据餐厅数量构建返回给用户的消息
     @staticmethod

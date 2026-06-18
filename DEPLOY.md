@@ -35,6 +35,9 @@ cp .env.prod.example .env.prod
 - `LLM_API_KEY`
 - `NEXT_PUBLIC_API_BASE_URL`
 - `NEXT_PUBLIC_AMAP_JS_KEY`
+- `PUBLIC_DOMAIN`
+- `NGINX_SSL_CERTIFICATE`
+- `NGINX_SSL_CERTIFICATE_KEY`
 
 说明：
 
@@ -47,16 +50,50 @@ cp .env.prod.example .env.prod
   - PostgreSQL：`postgres:5432`
   - Redis：`redis:6379`
   - Amap MCP Proxy：`http://amap-mcp-proxy:8010`
-- 如果直接暴露后端 8000 端口，`NEXT_PUBLIC_API_BASE_URL` 可以配置为：
-
-```bash
-http://你的服务器IP:8000/api/v1
-```
-
-如果后续通过 Nginx 代理，可以改成：
+- 当前生产部署默认通过 Nginx 统一代理前端和后端，`NEXT_PUBLIC_API_BASE_URL` 建议配置为：
 
 ```bash
 https://你的域名/api/v1
+```
+
+例如：
+
+```bash
+https://www.tastescout-agent.xin/api/v1
+```
+
+- `PUBLIC_DOMAIN` 用于生成 Nginx `server_name`
+- `NGINX_SSL_CERTIFICATE` 和 `NGINX_SSL_CERTIFICATE_KEY` 是容器内证书路径
+- `CERTBOT_EMAIL` 用于 Let's Encrypt 证书申请通知
+- 详细域名和 Nginx 部署说明见 `docs/nginx-domain-deployment.md`
+
+### HTTPS 证书和密钥文件位置
+
+如果你已经有 HTTPS 证书，在服务器项目根目录创建目录：
+
+```bash
+mkdir -p deploy/nginx/certs/live/www.tastescout-agent.xin
+```
+
+然后把证书和私钥放到：
+
+```text
+deploy/nginx/certs/live/www.tastescout-agent.xin/fullchain.pem
+deploy/nginx/certs/live/www.tastescout-agent.xin/privkey.pem
+```
+
+其中 `privkey.pem` 是私钥文件，不要提交到 Git。
+
+如果你没有证书，可以先用 Compose 内置 Certbot 服务申请：
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm --service-ports certbot
+```
+
+证书生成后再一键启动完整生产服务：
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
 ```
 
 ## 3. 启动服务
@@ -72,6 +109,7 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
 - Amap MCP Proxy
 - FastAPI Backend
 - Next.js Frontend
+- Nginx Reverse Proxy
 
 Backend 容器启动时会先执行：
 
@@ -150,6 +188,12 @@ docker compose -f docker-compose.prod.yml logs -f amap-mcp-proxy
 docker compose -f docker-compose.prod.yml logs -f frontend
 ```
 
+查看 Nginx 日志：
+
+```bash
+docker compose -f docker-compose.prod.yml logs -f nginx
+```
+
 查看全部服务日志：
 
 ```bash
@@ -161,20 +205,17 @@ docker compose -f docker-compose.prod.yml logs -f
 前端：
 
 ```bash
-http://你的服务器IP:3000
+https://你的域名
 ```
 
 后端 Swagger：
 
 ```bash
-http://你的服务器IP:8000/docs
+https://你的域名/api/v1/health
 ```
 
-Amap MCP Proxy 健康检查：
+生产环境下后端和 Amap MCP Proxy 默认不再直接暴露公网端口。需要调试时可以进入容器或临时恢复端口映射。
 
-```bash
-http://你的服务器IP:8010/health
-```
 
 ## 6. 停止服务
 
@@ -197,7 +238,8 @@ docker compose -f docker-compose.prod.yml down -v
 如果前端无法调用 Agent：
 
 - 检查 `.env.prod` 中的 `NEXT_PUBLIC_API_BASE_URL`
-- 检查服务器安全组是否开放 8000 和 3000 端口
+- 检查服务器安全组是否开放 80 和 443 端口
+- 检查 Nginx 日志
 - 检查后端日志是否有数据库、Redis 或 LLM 配置错误
 
 如果 Agent 无法调用高德 MCP：
