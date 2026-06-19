@@ -30,6 +30,8 @@ pnpm-debug.log*
 # Docker / runtime data
 postgres_data/
 redis_data/
+deploy/nginx/certs/*
+!deploy/nginx/certs/.gitkeep
 
 # IDE / OS
 .idea/
@@ -40,3 +42,5 @@ Thumbs.db
 # Logs
 *.log
 logs/
+
+docs/

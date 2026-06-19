@@ -1,3 +1,13 @@
+# HTTPS certificate files must exist before starting nginx:
+#   ./deploy/nginx/certs/live/www.tastescout-agent.xin/fullchain.pem
+#   ./deploy/nginx/certs/live/www.tastescout-agent.xin/privkey.pem
+#
+# If the files do not exist, issue them first with Certbot standalone mode:
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm --service-ports certbot
+#
+# Production one-command deployment after certificates exist:
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -40,8 +50,6 @@ services:
       - .env.prod
     expose:
       - "8010"
-    ports:
-      - "8010:8010"
     restart: unless-stopped
 
   backend:
@@ -62,8 +70,6 @@ services:
         condition: service_started
     expose:
       - "8000"
-    ports:
-      - "8000:8000"
     command: >
       sh -c "alembic upgrade head &&
       uvicorn app.main:app --host 0.0.0.0 --port 8000"
@@ -81,9 +87,50 @@ services:
     depends_on:
       backend:
         condition: service_started
-    ports:
-      - "3000:3000"
+    expose:
+      - "3000"
     restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: tastescout-nginx
+    depends_on:
+      frontend:
+        condition: service_started
+      backend:
+        condition: service_started
+    environment:
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN}
+      NGINX_SSL_CERTIFICATE: ${NGINX_SSL_CERTIFICATE}
+      NGINX_SSL_CERTIFICATE_KEY: ${NGINX_SSL_CERTIFICATE_KEY}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx/templates:/etc/nginx/templates:ro
+      - ./deploy/nginx/certs:/etc/letsencrypt:ro
+    restart: unless-stopped
+
+  certbot:
+    image: certbot/certbot:v2.11.0
+    container_name: tastescout-certbot
+    profiles:
+      - certbot
+    environment:
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN}
+      CERTBOT_EMAIL: ${CERTBOT_EMAIL}
+    ports:
+      - "80:80"
+    volumes:
+      - ./deploy/nginx/certs:/etc/letsencrypt
+    command: >
+      certonly
+      --standalone
+      --preferred-challenges=http
+      --email ${CERTBOT_EMAIL}
+      --agree-tos
+      --no-eff-email
+      -d ${PUBLIC_DOMAIN}
 
 volumes:
   postgres_data:

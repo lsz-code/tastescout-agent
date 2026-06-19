@@ -1,22 +1,28 @@
+from __future__ import annotations
+
+import re
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.memory.short_term import ShortTermMemory
-from app.schemas.restaurant import Location as RestaurantLocation
-from app.schemas.restaurant import RestaurantSearchFilters, RestaurantSearchRequest
 from app.agent.followup_question_builder import FollowupQuestionBuilder
 from app.agent.slot_checker import SlotChecker
 from app.agent.slot_extractor import SlotExtractor
+from app.memory.short_term import ShortTermMemory
+from app.schemas.restaurant import Location as RestaurantLocation
+from app.schemas.restaurant import RestaurantSearchFilters, RestaurantSearchRequest
 from app.services.restaurant_search_service import RestaurantSearchService
 from app.skills.base import Skill
 
-import re
-
 
 class RestaurantSearchSkill(Skill):
+    """餐厅搜索 Skill，负责把 Agent 槽位转换成搜索服务参数。"""
+
     name = "search_restaurants"
-    description = "按用户位置、地址、店名、关键词和偏好搜索餐厅。菜系不是必填项；没有关键词时默认搜索美食。用户找具体店名时，把店名放入 keyword，不要强制填 cuisine。"
+    description = (
+        "按用户位置、地址、店名、菜品关键词、菜系和偏好搜索餐厅。"
+        "用户找具体店名或菜品时，把名称放入 keyword；菜系只作为过滤条件。"
+    )
     parameters: dict[str, Any] = {
         "type": "object",
         "properties": {
@@ -39,7 +45,27 @@ class RestaurantSearchSkill(Skill):
         "required": ["user_id", "session_id"],
     }
 
+    GENERIC_KEYWORDS = {"", "美食", "餐厅", "饭店", "吃饭", "吃的", "好吃的", "随便推荐"}
+    CUISINES = {
+        "川菜",
+        "火锅",
+        "烧烤",
+        "日料",
+        "粤菜",
+        "广东菜",
+        "潮汕菜",
+        "湘菜",
+        "东北菜",
+        "韩餐",
+        "西餐",
+        "面馆",
+        "小吃",
+        "奶茶",
+        "甜品",
+    }
+
     def __init__(self) -> None:
+        """初始化搜索 Skill 需要的规则抽取器和追问构造器。"""
         self.slot_extractor = SlotExtractor()
         self.slot_checker = SlotChecker()
         self.followup_question_builder = FollowupQuestionBuilder()
@@ -50,6 +76,7 @@ class RestaurantSearchSkill(Skill):
         short_term_memory: ShortTermMemory,
         arguments: dict[str, Any],
     ) -> dict[str, Any]:
+        """构造 RestaurantSearchRequest 并调用搜索服务。"""
         filters = arguments.get("filters")
         payload = RestaurantSearchRequest(
             user_id=arguments["user_id"],
@@ -68,31 +95,27 @@ class RestaurantSearchSkill(Skill):
             if isinstance(filters, dict)
             else None,
         )
+
         service = RestaurantSearchService(db=db, short_term_memory=short_term_memory)
         response = await service.search(payload)
         return response.model_dump(mode="json")
 
-
-    #准备执行参数
     def prepare_arguments(
-    self,
-    arguments: dict[str, Any],
-    state: dict[str, Any],
+        self,
+        arguments: dict[str, Any],
+        state: dict[str, Any],
     ) -> dict[str, Any]:
+        """准备搜索工具参数，确保店名/菜品关键词不会被菜系覆盖。"""
         normalized = super().prepare_arguments(arguments, state)
-
         session_id = state.get("session_id")
-        message = state.get("message")
-        location = state.get("location")
+        message = state.get("message") or ""
+        request_location = state.get("location")
 
         if session_id is not None:
             normalized["session_id"] = session_id
 
-        if message is None:
-            return normalized
-
-        normalized.setdefault("keyword", "美食")
         normalized.setdefault("limit", 5)
+        normalized.setdefault("radius", 3000)
 
         if self._is_reroll_intent(message):
             restored = self._restore_last_search_context(
@@ -102,17 +125,32 @@ class RestaurantSearchSkill(Skill):
             if not restored:
                 normalized["missing_search_context"] = True
 
-        if location is not None:
-            normalized["location"] = location
+        if request_location is not None:
+            normalized["location"] = request_location
             normalized.pop("address", None)
 
         self._apply_search_slots(normalized, state.get("search_slots") or {})
         self._normalize_search_arguments(normalized, message)
 
+        if normalized.get("location") is not None:
+            normalized.pop("address", None)
+
+        if normalized.get("location") or normalized.get("address") or normalized.get("city"):
+            normalized.pop("missing_location", None)
+
+        if not normalized.get("keyword"):
+            normalized["keyword"] = "美食"
+
+        normalized["keyword"] = str(normalized["keyword"]).strip() or "美食"
+        normalized["search_query"] = normalized.get("search_query") or normalized["keyword"]
+        normalized["search_type"] = normalized.get("search_type") or self._infer_search_type(
+            normalized["keyword"],
+            normalized.get("filters"),
+        )
         return normalized
 
-    #进行槽位抽取，优先级：用户输入 > LLM解析 > 上下文，通过调用agent中的工具函数来进行抽取
     def extract_slots(self, state: dict[str, Any]) -> dict[str, Any]:
+        """抽取并合并搜索槽位，优先使用用户本轮明确输入。"""
         message = state.get("message") or ""
         short_term_memory = state.get("short_term_memory", {})
         pending_slots = short_term_memory.get("pending_search_slots")
@@ -128,32 +166,30 @@ class RestaurantSearchSkill(Skill):
             short_term_memory=short_term_memory,
             request_location=None,
         )
-        llm_slots = self._slots_from_llm_context(
-            state.get("llm_parsed_context") or {}
-        )
+        llm_slots = self._slots_from_llm_context(state.get("llm_parsed_context") or {})
+
+        # 优先级：历史上下文 < 上轮追问槽位 < LLM 当前解析 < 本轮规则解析。
         new_slots = {**llm_slots, **new_slots}
-        #将用户输入、LLM解析和上下文中的槽位进行合并，形成最终的搜索参数，
-        #并进行一些特例处理，比如地址和位置二选一，缺关键词时默认填美食等
         merged_slots = {**context_slots, **pending_slots, **new_slots}
+
         if new_slots.get("address") and not new_slots.get("location"):
             merged_slots.pop("location", None)
         if new_slots.get("location"):
             merged_slots.pop("address", None)
+
         if (
-            (
-                merged_slots.get("location")
-                or merged_slots.get("address")
-                or merged_slots.get("city")
-            )
+            (merged_slots.get("location") or merged_slots.get("address") or merged_slots.get("city"))
             and not merged_slots.get("keyword")
             and not merged_slots.get("cuisine")
         ):
             merged_slots["keyword"] = "美食"
+            merged_slots["search_query"] = "美食"
+            merged_slots["search_type"] = "generic"
 
         return {"search_slots": merged_slots}
 
-    #槽位检查，如果用户表达了换一批的意图，就不要求必须有搜索参数；否则按照正常的规则检查缺哪些必要的参数
     def check_slots(self, state: dict[str, Any]) -> dict[str, Any]:
+        """检查搜索必需位置信息，换一批场景复用上次搜索上下文。"""
         message = state.get("message") or ""
         if self._is_reroll_intent(message):
             return {"missing_slots": []}
@@ -162,12 +198,12 @@ class RestaurantSearchSkill(Skill):
         missing_slots = self.slot_checker.check_search_slots(slots)
         return {"missing_slots": missing_slots}
 
-    #进行多轮追问，构建追问的内容，并将缺失的槽位和部分槽位存入短期记忆，以便下一轮可以继续使用
     async def ask_followup(
         self,
         state: dict[str, Any],
         short_term_memory: ShortTermMemory,
     ) -> dict[str, Any]:
+        """生成追问，并把已有关键词、店名或菜系保存在 pending_search_slots。"""
         slots = state.get("search_slots") or {}
         missing_slots = state.get("missing_slots") or []
         reply = self.followup_question_builder.build(missing_slots, slots)
@@ -191,55 +227,58 @@ class RestaurantSearchSkill(Skill):
                 "partial_slots": slots,
             },
         }
-    
-    #构建参数响应
-    def build_data(
-    self,
-    result: dict[str, Any] | None,
-    ) -> dict[str, Any] | None:
+
+    def build_data(self, result: dict[str, Any] | None) -> dict[str, Any] | None:
+        """构造前端需要的搜索 data。"""
         if result is None:
             return None
 
         data = {"restaurants": result.get("restaurants") or []}
-
         if result.get("missing_location"):
             data["missing_location"] = True
-
         if result.get("missing_search_context"):
             data["missing_search_context"] = True
-
         return data
-    
-    #构建模版回答
+
     def build_template_reply(
         self,
         result: dict[str, Any] | None,
         error: str | None,
     ) -> str | None:
+        """LLM 不可用时的搜索模板回复。"""
         if error:
             return f"操作失败：{error}"
 
         result = result or {}
-
         if result.get("missing_search_context"):
-            return "我可以继续帮你换一批，不过还没找到上一轮的搜索条件。你发个地址，或者点一下“使用我的位置”。"
-
+            return "我可以继续帮你换一批，不过还没有上一轮搜索条件。你可以发个地址，或者点击“使用我的位置”。"
         if result.get("missing_location"):
-            return "我可以帮你找，不过还不知道你想看哪附近。你可以发个地址，或者点一下“使用我的位置”。"
+            return "我可以帮你找，不过还不知道你想看哪附近。你可以发个地址，或者点击“使用我的位置”。"
 
         restaurants = result.get("restaurants") or []
+        if not restaurants:
+            return "暂时没有找到匹配的餐厅，可以换个关键词、补充更具体的位置，或者扩大搜索范围。"
         return f"我先帮你挑了 {len(restaurants)} 家，可以看看有没有顺眼的。"
-    
-    #应用搜索槽位
+
     def _apply_search_slots(
         self,
         arguments: dict[str, Any],
         slots: dict[str, Any],
     ) -> None:
+        """把搜索槽位写入工具执行参数，店名/菜品 keyword 优先于 cuisine。"""
         if slots.get("address") and not slots.get("location"):
             arguments.pop("location", None)
 
-        for field in ("address", "location", "city", "keyword", "radius", "limit"):
+        for field in (
+            "address",
+            "location",
+            "city",
+            "keyword",
+            "radius",
+            "limit",
+            "search_query",
+            "search_type",
+        ):
             value = slots.get(field)
             if value is not None and value != "":
                 arguments[field] = value
@@ -250,7 +289,12 @@ class RestaurantSearchSkill(Skill):
 
         if slots.get("cuisine"):
             filters["cuisine"] = slots["cuisine"]
-            arguments["keyword"] = slots.get("keyword") or slots["cuisine"]
+            current_keyword = str(arguments.get("keyword") or "").strip()
+            if self._is_generic_keyword(current_keyword):
+                arguments["keyword"] = slots["cuisine"]
+                arguments["search_query"] = slots["cuisine"]
+                arguments["search_type"] = "cuisine"
+
         if slots.get("budget") is not None:
             filters["max_price"] = slots["budget"]
         if slots.get("scene"):
@@ -258,37 +302,48 @@ class RestaurantSearchSkill(Skill):
 
         if filters:
             arguments["filters"] = filters
-    
-    #对搜索参数进行归一化
+
     def _normalize_search_arguments(
         self,
         arguments: dict[str, Any],
         message: str,
     ) -> None:
-        address = arguments.get("address")
+        """根据用户原文补齐地址、城市、半径和关键词等搜索参数。"""
         extracted_address = self._extract_address(message)
-        if extracted_address:
-            arguments.pop("location", None)
-        if arguments.get("location") is None and extracted_address and (not address or len(str(address)) < 6):
+        if extracted_address and arguments.get("location") is None:
             arguments["address"] = extracted_address
 
-        if "北京" in message and not arguments.get("city"):
-            arguments["city"] = "北京"
+        extracted_keyword = self._extract_keyword_from_message(message)
+        if extracted_keyword:
+            current_keyword = str(arguments.get("keyword") or "").strip()
+            if self._is_generic_keyword(current_keyword) or extracted_keyword not in self.CUISINES:
+                arguments["keyword"] = extracted_keyword
+                arguments["search_query"] = extracted_keyword
+                arguments["search_type"] = "keyword"
+
+        city = self._extract_city(message)
+        if city and not arguments.get("city"):
+            arguments["city"] = city
+
+        radius = self._extract_radius(message)
+        if radius is not None:
+            arguments["radius"] = radius
 
         filters = arguments.get("filters")
         if not isinstance(filters, dict):
             filters = {}
 
-        if "川菜" in message:
-            arguments["keyword"] = "川菜"
-            filters.setdefault("cuisine", "川菜")
+        cuisine = self._extract_cuisine(message)
+        if cuisine:
+            filters.setdefault("cuisine", cuisine)
+            if self._is_generic_keyword(str(arguments.get("keyword") or "")):
+                arguments["keyword"] = cuisine
+                arguments["search_query"] = cuisine
+                arguments["search_type"] = "cuisine"
 
         max_price = self._extract_max_price(message)
         if max_price is not None:
             filters["max_price"] = max_price
-            radius = self._to_int(arguments.get("radius"))
-            if radius is not None and radius < 500:
-                arguments["radius"] = 3000
 
         if filters:
             arguments["filters"] = filters
@@ -302,26 +357,120 @@ class RestaurantSearchSkill(Skill):
         ):
             arguments["missing_location"] = True
 
-    #存储最后一次搜索的上下文，以便用户说“换一批”时可以继续使用
     def _restore_last_search_context(
         self,
         normalized: dict[str, Any],
         short_term_memory: dict[str, Any],
     ) -> bool:
+        """从短期记忆恢复上一次搜索条件，用于“换一批”。"""
         context = short_term_memory.get("last_search_context")
         if not isinstance(context, dict):
             return False
 
-        for field in ("address", "location", "keyword", "city", "radius", "limit", "filters"):
+        for field in (
+            "address",
+            "location",
+            "keyword",
+            "search_query",
+            "search_type",
+            "city",
+            "radius",
+            "limit",
+            "filters",
+        ):
             value = context.get(field)
             if value is not None and value != "":
                 normalized[field] = value
 
-        return bool(normalized.get("location") or normalized.get("address") or normalized.get("keyword"))
-    
-    #判断关键词规则是否在用户的上下文中
+        return bool(
+            normalized.get("location")
+            or normalized.get("address")
+            or normalized.get("city")
+            or normalized.get("keyword")
+        )
+
+    @classmethod
+    def _slots_from_llm_context(cls, context: dict[str, Any]) -> dict[str, Any]:
+        """从 LLM 意图解析结果中提取搜索槽位。"""
+        if not isinstance(context, dict) or context.get("intent") != "search_restaurants":
+            return {}
+
+        slots: dict[str, Any] = {}
+        for field in ("address", "location", "city", "keyword", "radius", "limit"):
+            value = context.get(field)
+            if value is not None and value != "":
+                slots[field] = value
+
+        if context.get("keyword"):
+            slots["search_query"] = context["keyword"]
+            slots["search_type"] = "keyword"
+        if context.get("cuisine"):
+            slots["cuisine"] = context["cuisine"]
+        if context.get("budget") is not None:
+            slots["budget"] = context["budget"]
+        if context.get("scene"):
+            slots["scene"] = context["scene"]
+        if context.get("is_continue_recommendation"):
+            slots["is_continue_recommendation"] = True
+
+        return slots
+
+    @staticmethod
+    def _build_context_search_slots(
+        short_term_memory: dict[str, Any],
+        request_location: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """从短期记忆恢复可复用的搜索上下文槽位。"""
+        context_slots: dict[str, Any] = {}
+
+        last_search_context = short_term_memory.get("last_search_context")
+        if isinstance(last_search_context, dict):
+            for field in (
+                "address",
+                "location",
+                "keyword",
+                "search_query",
+                "search_type",
+                "radius",
+                "limit",
+                "city",
+            ):
+                value = last_search_context.get(field)
+                if value is not None and value != "":
+                    context_slots[field] = value
+
+            filters = last_search_context.get("filters")
+            if isinstance(filters, dict):
+                if filters.get("cuisine"):
+                    context_slots["cuisine"] = filters["cuisine"]
+                if filters.get("max_price") is not None:
+                    context_slots["budget"] = filters["max_price"]
+                if filters.get("scene"):
+                    context_slots["scene"] = filters["scene"]
+
+        current_keyword = short_term_memory.get("current_search_keyword")
+        if current_keyword:
+            context_slots.setdefault("keyword", current_keyword)
+            context_slots.setdefault("search_query", current_keyword)
+
+        current_address = short_term_memory.get("current_address")
+        if current_address:
+            context_slots["address"] = current_address
+            context_slots.pop("location", None)
+
+        current_location = short_term_memory.get("current_location")
+        if isinstance(current_location, dict):
+            context_slots["location"] = current_location
+
+        if request_location:
+            context_slots["location"] = request_location
+            context_slots.pop("address", None)
+
+        return context_slots
+
     @staticmethod
     def _is_reroll_intent(message: str) -> bool:
+        """判断用户是否表达了“换一批/再推荐”的意图。"""
         return any(
             keyword in message
             for keyword in [
@@ -338,108 +487,59 @@ class RestaurantSearchSkill(Skill):
                 "换一批",
             ]
         )
-    
-    #提取地址
+
+    @classmethod
+    def _extract_keyword_from_message(cls, message: str) -> str | None:
+        """复用 SlotExtractor 的关键词抽取能力。"""
+        return SlotExtractor._extract_search_keyword(message)
+
     @staticmethod
     def _extract_address(message: str) -> str | None:
-        match = re.search(
-            r"(?:我(?:现在|目前|这会儿|刚好)?在|(?:我)?人在|(?:现在|目前|这会儿|刚好)在|位置(?:是|在)?|地址(?:是|在)?|我在|在)"
-            r"([^，,。；;]+?)(?:附近|周边)?(?:的|$)",
-            message,
-        )
-        if not match:
-            match = re.search(
-                r"([^，,。；;]{2,20})(?:这边|这里|当地|有啥好吃|有什么好吃)",
-                message,
-            )
-            if not match:
-                return None
+        """复用 SlotExtractor 的地址抽取能力。"""
+        return SlotExtractor._extract_address(message)
 
-        address = match.group(1).strip()
-        return address or None
-    
-    #提取最大人均价格
+    @staticmethod
+    def _extract_city(message: str) -> str | None:
+        """提取城市名。"""
+        return SlotExtractor._extract_city(message)
+
+    @staticmethod
+    def _extract_radius(message: str) -> int | None:
+        """提取搜索半径。"""
+        return SlotExtractor._extract_radius(message)
+
     @staticmethod
     def _extract_max_price(message: str) -> int | None:
-        match = re.search(r"人均\s*(\d+)\s*(?:元)?以内", message)
-        if not match:
-            return None
-        return int(match.group(1))
-    
-    @staticmethod
-    def _to_int(value: Any) -> int | None:
-        if value is None or value == "":
-            return None
-        try:
-            return int(float(value))
-        except (TypeError, ValueError):
-            return None
+        """提取人均预算上限。"""
+        return SlotExtractor._extract_budget(message)
 
-    #判断用户是否表达了“附近”或“周边”的意图
+    @classmethod
+    def _extract_cuisine(cls, message: str) -> str | None:
+        """提取菜系。"""
+        for cuisine in cls.CUISINES:
+            if cuisine in message:
+                return cuisine
+        return None
+
+    @classmethod
+    def _is_generic_keyword(cls, keyword: str) -> bool:
+        """判断 keyword 是否只是泛化搜索词。"""
+        return keyword.strip() in cls.GENERIC_KEYWORDS
+
     @staticmethod
     def _contains_nearby_intent(message: str) -> bool:
-        return any(keyword in message for keyword in ["附近", "周边"])
+        """判断用户是否表达附近/周边意图。"""
+        return any(keyword in message for keyword in ["附近", "周边", "周围"])
 
-    @staticmethod
-    def _slots_from_llm_context(context: dict[str, Any]) -> dict[str, Any]:
-        if not isinstance(context, dict):
-            return {}
-        if context.get("intent") != "search_restaurants":
-            return {}
-
-        slots: dict[str, Any] = {}
-        for field in ("address", "location", "city", "keyword", "radius", "limit"):
-            value = context.get(field)
-            if value is not None and value != "":
-                slots[field] = value
-
-        if context.get("cuisine"):
-            slots["cuisine"] = context["cuisine"]
-        if context.get("budget") is not None:
-            slots["budget"] = context["budget"]
-        if context.get("scene"):
-            slots["scene"] = context["scene"]
-
-        if context.get("is_continue_recommendation"):
-            slots["is_continue_recommendation"] = True
-
-        return slots
-
-    #构建文本搜索槽位
-    @staticmethod
-    def _build_context_search_slots(
-        short_term_memory: dict[str, Any],
-        request_location: dict[str, Any] | None,
-    ) -> dict[str, Any]:
-        context_slots: dict[str, Any] = {}
-
-        last_search_context = short_term_memory.get("last_search_context")
-        if isinstance(last_search_context, dict):
-            for field in ("address", "location", "keyword", "radius", "limit", "city"):
-                value = last_search_context.get(field)
-                if value is not None and value != "":
-                    context_slots[field] = value
-
-            filters = last_search_context.get("filters")
-            if isinstance(filters, dict):
-                if filters.get("cuisine"):
-                    context_slots["cuisine"] = filters["cuisine"]
-                if filters.get("max_price") is not None:
-                    context_slots["budget"] = filters["max_price"]
-                if filters.get("scene"):
-                    context_slots["scene"] = filters["scene"]
-
-        current_address = short_term_memory.get("current_address")
-        if current_address:
-            context_slots["address"] = current_address
-            context_slots.pop("location", None)
-
-        current_location = short_term_memory.get("current_location")
-        if isinstance(current_location, dict):
-            context_slots["location"] = current_location
-
-        if request_location:
-            context_slots["location"] = request_location
-            context_slots.pop("address", None)
-
-        return context_slots
+    @classmethod
+    def _infer_search_type(
+        cls,
+        keyword: str,
+        filters: dict[str, Any] | None,
+    ) -> str:
+        """根据 keyword 和 filters 推断搜索类型。"""
+        if cls._is_generic_keyword(keyword):
+            return "generic"
+        if keyword in cls.CUISINES or (isinstance(filters, dict) and filters.get("cuisine") == keyword):
+            return "cuisine"
+        return "keyword"

@@ -106,6 +106,7 @@ class AgentWorkflow:
             "error": None,
             "memory_used": False,
             "planned_tool_args":{},
+            "llm_slot_plan":None,
         }
         return await self.graph.ainvoke(initial_state)
 

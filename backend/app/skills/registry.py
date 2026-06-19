@@ -19,6 +19,10 @@ class SkillRegistry:
     arguments: dict[str, Any],
     state: dict[str, Any],
     ) -> dict[str, Any]:
+        """
+        根据工具名称和当前状态准备工具执行所需的参数，
+        保持和tool_registry对外暴露的prepare_arguments方法相同
+        """
         skill = self.get(tool_name)
         if skill is None:
             return dict(arguments or {})
@@ -30,6 +34,10 @@ class SkillRegistry:
         tool_name: str,
         result: dict[str, Any] | None,
     ) -> dict[str, Any] | None:
+        """
+        把结果转换成前端所需的数据格式，保持和
+        tool_registry对外暴露的build_data方法相同
+        """
         skill = self.get(tool_name)
         if skill is None:
             return result
@@ -42,6 +50,10 @@ class SkillRegistry:
         result: dict[str, Any] | None,
         error: str | None,
     ) -> str | None:
+        """
+        LLM生成回复不可用时，根据工具名称和执行结果构建一个默认的回复，
+        保持和tool_registry对外暴露的build_template_reply方法相同
+        """
         if tool_name is None:
             return None
 
@@ -56,6 +68,9 @@ class SkillRegistry:
         tool_name: str,
         state: dict[str, Any],
     ) -> dict[str, Any]:
+        """
+        按照每个SKill自己的语义抽取槽位
+        """
         skill = self.get(tool_name)
         if skill is None:
             return {"search_slots": state.get("search_slots")}
@@ -66,6 +81,9 @@ class SkillRegistry:
         tool_name: str,
         state: dict[str, Any],
     ) -> dict[str, Any]:
+        """
+        检查当前SKill的必要参数是否满足，如果不满足返回缺失的参数列表
+        """
         skill = self.get(tool_name)
         if skill is None:
             return {"missing_slots": state.get("missing_slots", [])}
@@ -77,6 +95,9 @@ class SkillRegistry:
         state: dict[str, Any],
         short_term_memory: ShortTermMemory,
     ) -> dict[str, Any]:
+        """
+        生成缺参追问
+        """
         skill = self.get(tool_name)
         if skill is None:
             return {
@@ -99,6 +120,9 @@ class SkillRegistry:
     
     #开放工具定义
     def openai_tool_definitions(self)->list[dict[str,Any]]:
+        """
+        暴露给LLM的业务级工具定义
+        """
         return [skill.to_openai_tool() for skill in self._skills.values()]
     
     #执行工具,保持和tool_registry对外暴露的执行工具名称和参数相同
