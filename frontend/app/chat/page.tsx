@@ -220,6 +220,7 @@ export default function ChatPage() {
                 name: restaurant.name,
                 address: restaurant.address,
                 photo: restaurant.photo,
+                location: restaurant.location,
                 cuisine_type: restaurant.cuisine_type,
                 rating: restaurant.rating,
                 avg_price: restaurant.avg_price,

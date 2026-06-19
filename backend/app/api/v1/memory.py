@@ -53,8 +53,6 @@ async def set_short_term_memory(
         if payload.user_id is not None:
             data["user_id"] = payload.user_id
 
-        print("redis key =", payload.session_id)
-        print("redis value =", data)
         updated_memory = await memory.set(payload.session_id,data)
         return MemoryOperationResponse(
             success=True,
