@@ -152,6 +152,7 @@ class RestaurantSearchSkill(Skill):
 
         return {"search_slots": merged_slots}
 
+    #槽位检查，如果用户表达了换一批的意图，就不要求必须有搜索参数；否则按照正常的规则检查缺哪些必要的参数
     def check_slots(self, state: dict[str, Any]) -> dict[str, Any]:
         message = state.get("message") or ""
         if self._is_reroll_intent(message):
@@ -161,6 +162,7 @@ class RestaurantSearchSkill(Skill):
         missing_slots = self.slot_checker.check_search_slots(slots)
         return {"missing_slots": missing_slots}
 
+    #进行多轮追问，构建追问的内容，并将缺失的槽位和部分槽位存入短期记忆，以便下一轮可以继续使用
     async def ask_followup(
         self,
         state: dict[str, Any],
@@ -403,6 +405,7 @@ class RestaurantSearchSkill(Skill):
 
         return slots
 
+    #构建文本搜索槽位
     @staticmethod
     def _build_context_search_slots(
         short_term_memory: dict[str, Any],

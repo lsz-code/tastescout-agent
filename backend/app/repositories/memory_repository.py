@@ -6,6 +6,11 @@ from app.models.user import User
 from app.models.user_memory import UserMemory
 from app.schemas.memory import LongTermMemoryData
 
+from sqlalchemy.orm import selectinload
+
+from app.models.reviews import Review
+
+
 #长期记忆存储库操作方法
 class MemoryRepository:
     def __init__(self, db: AsyncSession):
@@ -70,4 +75,22 @@ class MemoryRepository:
         await self.db.flush()
         return memory_orm
     
-          
+    async def get_reviews_by_user_id(self,user_db_id:int)->list[Review]:
+        """
+        获取指定用户发布过的评论。
+
+        这个方法用于刷新长期记忆，把用户自己的评论内容也纳入偏好分析。
+        这里会同时预加载评论关联的餐厅和用户，避免后续访问review.restraurant
+        或review.user时触发额外的懒加载查询。
+        """
+        result = await self.db.execute(
+            select(Review)
+            .options(
+                selectinload(Review.restaurant),  # 预加载关联的餐厅
+                selectinload(Review.user)  # 预加载关联的用户
+            )
+            .where(Review.user_id == user_db_id)
+            .order_by(Review.created_at.desc())
+        )
+
+        return list(result.scalars().all())
