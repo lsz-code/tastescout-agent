@@ -9,7 +9,12 @@ from app.mcp.schemas import (
     PlaceDetailRequest,
     TextSearchRequest,
 )
-from app.memory.short_term import ShortTermMemory, get_short_term_memory
+from app.memory.short_term import (
+    MAX_CURRENT_CANDIDATES,
+    MAX_RECOMMENDED_POI_IDS,
+    ShortTermMemory,
+    get_short_term_memory,
+)
 from app.schemas.memory import LongTermMemoryData
 from app.schemas.restaurant import (
     Location,
@@ -312,21 +317,8 @@ class RestaurantSearchService:
         existing_recommended_poi_ids: list[str],
     ) -> None:
         candidates = [
-            {
-                "rank": item.rank,
-                "poi_id": item.poi_id,
-                "name": item.name,
-                "photo": item.photo,
-                "address": item.address,
-                "cuisine_type": item.cuisine_type,
-                "rating": item.rating,
-                "avg_price": item.avg_price,
-                "distance": item.distance,
-                "score": item.score,
-                "match_reasons": item.match_reasons,
-                "recommend_reason": item.recommend_reason,
-            }
-            for item in restaurants
+            self._build_memory_candidate(item)
+            for item in restaurants[:MAX_CURRENT_CANDIDATES]
         ]
         current_poi_ids = [
             item.poi_id
@@ -375,20 +367,47 @@ class RestaurantSearchService:
             return []
         return [str(item) for item in value if item]
 
+    @staticmethod
+    def _build_memory_candidate(item: RestaurantSearchItem) -> dict[str, Any]:
+        return {
+            "rank": item.rank,
+            "poi_id": item.poi_id,
+            "name": item.name,
+            "photo": item.photo,
+            "address": item.address,
+            "location": item.location,
+            "cuisine_type": item.cuisine_type,
+            "rating": item.rating,
+            "avg_price": item.avg_price,
+            "distance": item.distance,
+            "score": item.score,
+            "match_reasons": item.match_reasons[:5],
+            "recommended_dishes": (item.recommended_dishes or [])[:5],
+            "review_summary": item.review_summary,
+            "recommend_reason": item.recommend_reason,
+        }
+
     #合并推荐餐厅id列表，去重
     @staticmethod
     def _merge_poi_ids(
         existing_recommended_poi_ids: list[str],
         current_poi_ids: list[str],
     ) -> list[str]:
-        merged = list(existing_recommended_poi_ids)
-        seen = set(existing_recommended_poi_ids)
-        for poi_id in current_poi_ids:
-            poi_id_text = str(poi_id)
-            if poi_id_text not in seen:
-                seen.add(poi_id_text)
-                merged.append(poi_id_text)
-        return merged
+        merged = [
+            str(poi_id)
+            for poi_id in [*existing_recommended_poi_ids, *current_poi_ids]
+            if poi_id
+        ]
+        seen: set[str] = set()
+        result_reversed: list[str] = []
+        for poi_id in reversed(merged):
+            if poi_id in seen:
+                continue
+            seen.add(poi_id)
+            result_reversed.append(poi_id)
+            if len(result_reversed) >= MAX_RECOMMENDED_POI_IDS:
+                break
+        return list(reversed(result_reversed))
 
     #判断长期记忆中是否有相关信息
     @staticmethod

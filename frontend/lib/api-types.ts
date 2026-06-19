@@ -101,6 +101,7 @@ export type FavoriteRestaurant = {
   name: string;
   address?: string | null;
   photo?: string | null;
+  location?: Record<string, unknown> | string | null;
   cuisine_type?: string | null;
   rating?: number | null;
   avg_price?: number | null;

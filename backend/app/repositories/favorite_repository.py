@@ -22,16 +22,30 @@ class FavoriteRepository:
         user_db_id: int,
         name: str,
         description: str | None = None,
+        is_default: bool = False,
     ) -> FavoriteCollection:
         collection = FavoriteCollection(
             user_id=user_db_id,
             name=name,
             description=description,
-            is_default=False,
+            is_default=is_default,
         )
         self.db.add(collection)
         await self.db.flush()
         return collection
+
+    async def get_collection_by_user_and_name(
+        self,
+        user_db_id: int,
+        name: str,
+    ) -> FavoriteCollection | None:
+        result = await self.db.execute(
+            select(FavoriteCollection).where(
+                FavoriteCollection.user_id == user_db_id,
+                FavoriteCollection.name == name,
+            )
+        )
+        return result.scalar_one_or_none()
 
     async def get_collections_by_user(
         self,

@@ -52,6 +52,7 @@ class FavoriteRestaurantResponse(BaseModel):
     name: str
     address: str | None
     photo: str | None = None
+    location: dict[str, Any] | None = None
     cuisine_type: str | None
     rating: float | None
     avg_price: int | None

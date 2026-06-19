@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from fastapi import HTTPException, status
 
+from app.guardrails.database_write_guard import DatabaseWriteGuard
 from app.models.favorite_collection import FavoriteCollection
 from app.models.favorite_restaurant import FavoriteRestaurant
 from app.models.user import User
@@ -17,7 +18,6 @@ from app.schemas.favorite import (
     FavoriteCollectionResponse,
     FavoriteRestaurantResponse,
 )
-from app.schemas.memory import RefreshLongTermMemoryResponse
 
 
 class FavoriteService:
@@ -73,49 +73,71 @@ class FavoriteService:
     ) -> AddFavoriteRestaurantResponse:
         try:
             user = await self._get_existing_user(payload.user_id)
-            
-            #判断餐厅是否存在
+            cleaned = DatabaseWriteGuard.validate_favorite_restaurant(
+                payload.model_dump()
+            )
+            target_collection = None
+            if payload.collection_id is not None or payload.collection_name:
+                target_collection = await self._resolve_collection(
+                    user=user,
+                    collection_id=payload.collection_id,
+                    collection_name=payload.collection_name,
+                )
+
             existing_favorite = (
                 await self.favorite_repository.get_favorite_by_user_and_poi(
                     user_db_id=user.id,
-                    poi_id=payload.poi_id,
+                    poi_id=cleaned["poi_id"],
                 )
             )
             if existing_favorite is not None:
+                changed = self._update_existing_favorite(
+                    favorite=existing_favorite,
+                    values=cleaned,
+                    collection_id=(
+                        target_collection.id
+                        if target_collection is not None
+                        else existing_favorite.collection_id
+                    ),
+                )
+                if changed:
+                    await self.db.flush()
+                await self.db.commit()
+                if changed:
+                    await self.db.refresh(existing_favorite)
+                    await self._refresh_memory_after_commit(user.user_id)
                 return AddFavoriteRestaurantResponse(
                     success=True,
                     already_exists=True,
                     favorite_id=existing_favorite.id,
-                    message="餐厅已收藏",
+                    message="餐厅已收藏，已更新收藏信息" if changed else "餐厅已收藏",
                 )
 
-            collection = await self._resolve_collection(user, payload.collection_id)
+            collection = target_collection or await self._resolve_collection(
+                user=user,
+                collection_id=payload.collection_id,
+                collection_name=payload.collection_name,
+            )
             favorite = await self.favorite_repository.create_favorite(
                 user_db_id=user.id,
                 collection_id=collection.id,
-                poi_id=payload.poi_id,
-                name=payload.name,
-                address=payload.address,
-                photo=payload.photo,
-                location=payload.location,
-                cuisine_type=payload.cuisine_type,
-                rating=payload.rating,
-                avg_price=payload.avg_price,
-                distance=payload.distance,
-                recommended_dishes=payload.recommended_dishes,
-                review_summary=payload.review_summary,
-                recommend_reason=payload.recommend_reason,
-                raw_data=payload.raw_data,
+                poi_id=cleaned["poi_id"],
+                name=cleaned["name"],
+                address=cleaned.get("address"),
+                photo=cleaned.get("photo"),
+                location=cleaned.get("location"),
+                cuisine_type=cleaned.get("cuisine_type"),
+                rating=cleaned.get("rating"),
+                avg_price=cleaned.get("avg_price"),
+                distance=cleaned.get("distance"),
+                recommended_dishes=cleaned.get("recommended_dishes"),
+                review_summary=cleaned.get("review_summary"),
+                recommend_reason=cleaned.get("recommend_reason"),
+                raw_data=cleaned.get("raw_data"),
             )
-            #这里先触发修改长期记忆的函数，但不等待它完成，也不让它的错误影响收藏添加的流程
-            refresh_response = await self._on_favorite_changed(user)
-            if not refresh_response.success:
-                # 这里可以记录日志，说明长期记忆刷新失败了，但不影响收藏添加的结果
-                print(f"Warning: Memory refresh failed after adding favorite. Message: {refresh_response.message}")
-            
             await self.db.commit()
-            #这里要等数据库提交成功后再刷新对象
             await self.db.refresh(favorite)
+            await self._refresh_memory_after_commit(user.user_id)
 
             return AddFavoriteRestaurantResponse(
                 success=True,
@@ -181,8 +203,8 @@ class FavoriteService:
                 )
 
             await self.favorite_repository.delete_favorite(favorite)
-            await self._on_favorite_changed(user)
             await self.db.commit()
+            await self._refresh_memory_after_commit(user.user_id)
 
             return DeleteFavoriteResponse(success=True,message="收藏已删除")
 
@@ -209,13 +231,30 @@ class FavoriteService:
         self,
         user: User,
         collection_id: int | None,
+        collection_name: str | None = None,
     ) -> FavoriteCollection:
+        normalized_name = collection_name.strip() if collection_name else None
+        if normalized_name:
+            collection = (
+                await self.favorite_repository.get_collection_by_user_and_name(
+                    user_db_id=user.id,
+                    name=normalized_name,
+                )
+            )
+            if collection is not None:
+                return collection
+            return await self.favorite_repository.create_collection(
+                user_db_id=user.id,
+                name=normalized_name,
+            )
+
         if collection_id is None:
             collection = await self.favorite_repository.get_default_collection(user.id)
             if collection is None:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="默认收藏夹不存在",
+                collection = await self.favorite_repository.create_collection(
+                    user_db_id=user.id,
+                    name="默认收藏夹",
+                    is_default=True,
                 )
             return collection
 
@@ -240,11 +279,52 @@ class FavoriteService:
             )
         return collection
 
-    #通用工具函数，当收藏夹发生变化时，触发记忆更新
-    async def _on_favorite_changed(self, user: User) -> RefreshLongTermMemoryResponse:
-        # Trigger Memory Refresh after favorite changes.
-        MemService = MemoryService(self.db)
-        return await MemService.refresh_long_term_memory(user_id=user.user_id)
+    async def _refresh_memory_after_commit(self, user_id: str) -> None:
+        try:
+            refresh_response = await MemoryService(self.db).refresh_long_term_memory(
+                user_id=user_id
+            )
+            if not refresh_response.success:
+                print(
+                    "Warning: Memory refresh failed after favorite change. "
+                    f"Message: {refresh_response.message}"
+                )
+        except Exception as exc:
+            print(f"Warning: Memory refresh failed after favorite change: {exc}")
+
+    @staticmethod
+    def _update_existing_favorite(
+        favorite: FavoriteRestaurant,
+        values: dict,
+        collection_id: int,
+    ) -> bool:
+        changed = False
+        if favorite.collection_id != collection_id:
+            favorite.collection_id = collection_id
+            changed = True
+
+        for field in (
+            "name",
+            "address",
+            "photo",
+            "location",
+            "cuisine_type",
+            "rating",
+            "avg_price",
+            "distance",
+            "recommended_dishes",
+            "review_summary",
+            "recommend_reason",
+            "raw_data",
+        ):
+            value = values.get(field)
+            if value is None:
+                continue
+            if getattr(favorite, field) != value:
+                setattr(favorite, field, value)
+                changed = True
+
+        return changed
 
 
     #构建收藏夹反馈格式
@@ -274,6 +354,7 @@ class FavoriteService:
             name=favorite.name,
             address=favorite.address,
             photo=favorite.photo,
+            location=favorite.location,
             cuisine_type=favorite.cuisine_type,
             rating=favorite.rating,
             avg_price=favorite.avg_price,
