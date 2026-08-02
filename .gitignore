@@ -1,12 +1,7 @@
 # Environment files
 .env
-.env.local
-.env.*.local
-.env.prod
-.env.prod.*
+.env.*
 !.env.example
-!.env.prod.example
-!backend/.env.example
 
 # Python
 __pycache__/
@@ -22,16 +17,15 @@ env/
 node_modules/
 .next/
 out/
+*.tsbuildinfo
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# Docker / runtime data
+# Runtime data
 postgres_data/
 redis_data/
-deploy/nginx/certs/*
-!deploy/nginx/certs/.gitkeep
 
 # IDE / OS
 .idea/
