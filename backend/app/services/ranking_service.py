@@ -39,7 +39,7 @@ class RankingService:
             )
             ranked.append(item)
 
-#按分数对餐厅进行排序，分数相同的情况下按评分排序，评分也相同的情况下按距离排序，距离未知的排在最后
+        #按分数对餐厅进行排序，分数相同的情况下按评分排序，评分也相同的情况下按距离排序，距离未知的排在最后
         ranked.sort(
             key=lambda item: (
                 -float(item.get("score") or 0),
@@ -64,7 +64,7 @@ class RankingService:
         score = 0.0
         reasons: list[str] = []
 
-        #把评分转换为浮点数进行计算，如果评分较高则加分，并记录推荐理由
+        #把高德mcp中的评分转换为浮点数进行计算，如果评分较高则加分，并记录推荐理由
         rating = self._to_float(restaurant.get("rating"))
         if rating is not None:
             score += rating * 4

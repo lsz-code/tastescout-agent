@@ -45,7 +45,6 @@ class MemoryLoader:
                 "short_term_memory": short_term_memory,
                 "long_term_memory": memory.model_dump(),
                 "memory_used": True,
-                "tool_calls": state.get("tool_calls", []),
                 "error": None,
             }
         except Exception as exc:

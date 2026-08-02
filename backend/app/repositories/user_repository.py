@@ -11,6 +11,9 @@ class UserRepository:
         self.db = db
 
     async def get_by_user_id(self, user_id: str) -> User | None:
+        """
+        根据用户ID获取用户信息
+        """
         result = await self.db.execute(select(User).where(User.user_id == user_id))
         return result.scalar_one_or_none()
 
@@ -20,6 +23,9 @@ class UserRepository:
         username: str | None = None,
         avatar_url: str | None = None,
     ) -> User:
+        """
+        创建新用户
+        """
         user = User(
             user_id=user_id,
             username=username,
@@ -30,6 +36,7 @@ class UserRepository:
         return user
 
     async def get_default_collection(self, user: User) -> FavoriteCollection | None:
+        """获取用户的默认收藏夹"""
         result = await self.db.execute(
             select(FavoriteCollection).where(
                 FavoriteCollection.user_id == user.id,
@@ -39,6 +46,7 @@ class UserRepository:
         return result.scalar_one_or_none()
 
     async def create_default_collection(self, user: User) -> FavoriteCollection:
+        """创建用户的默认收藏夹"""
         collection = FavoriteCollection(
             user_id=user.id,
             name="默认收藏夹",
@@ -49,12 +57,14 @@ class UserRepository:
         return collection
 
     async def get_user_memory(self, user: User) -> UserMemory | None:
+        """获取用户记忆"""
         result = await self.db.execute(
             select(UserMemory).where(UserMemory.user_id == user.id)
         )
         return result.scalar_one_or_none()
 
     async def create_user_memory(self, user: User) -> UserMemory:
+        """创建用户长期记忆"""
         memory = UserMemory(
             user_id=user.id,
             favorite_cuisines=[],

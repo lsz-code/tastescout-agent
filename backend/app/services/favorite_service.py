@@ -32,7 +32,7 @@ class FavoriteService:
         try:
             #检测用户存在
             user = await self._get_existing_user(payload.user_id)
-            #
+
             collection = await self.favorite_repository.create_collection(
                 user_db_id=user.id,
                 name=payload.name,
