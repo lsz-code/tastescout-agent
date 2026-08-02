@@ -129,6 +129,7 @@ class RestaurantSearchSkill(Skill):
             normalized["location"] = request_location
             normalized.pop("address", None)
 
+        #合并搜索参数槽位并根据用户原文补齐地址、城市、半径和关键词等参数
         self._apply_search_slots(normalized, state.get("search_slots") or {})
         self._normalize_search_arguments(normalized, message)
 

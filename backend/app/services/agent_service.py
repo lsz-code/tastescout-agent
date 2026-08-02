@@ -25,7 +25,7 @@ class AgentService:
             session_id=payload.session_id,
             message=payload.message,
             location=payload.location,
-            location_label=payload.location_label,
+            location_label=payload.location_label,#这里的localation_label是用户输入的文字地理位置，用于辅助搜索餐厅等功能
         )
 
         return AgentChatResponse(

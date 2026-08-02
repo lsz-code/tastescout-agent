@@ -28,12 +28,11 @@ class SearchSlotPlanner:
         rule_result = self.tool_registry.extract_slots("search_restaurants", state)
         rule_slots = rule_result.get("search_slots") or {}
 
-        #LLM做搜索参数槽规划，
-        #让LLM，根据用户输入，规则化提取结果，请求的位置信息，
-        # 以及短期记忆和长期记忆中的相关信息
-        #来构建一个结构化的槽位补全和追问计划，
-        # 告诉工作流哪些槽位缺失，是否需要追问，以及追问内容是什么
-        #主要是应对用户输入模糊，或者规则抽取不到位的情况，让LLM来补全和规划
+        #message：用户这一轮原始输入
+        # rule_slots：规则提取器已经抽到的槽位
+        # request_location：前端传来的当前位置经纬度
+        # short_term_memory：上一轮 pending slots、last_search_context、current_location
+        # long_term_memory：用户长期偏好
         llm_slot_plan = await self.llm_slot_planner.plan_search_slots(
             message=state.get("message") or "",
             rule_slots=rule_slots,
@@ -48,7 +47,9 @@ class SearchSlotPlanner:
         #llm提取的槽位信息负责对规则抽取的结果进行补全，
         #但不覆盖规则抽取的结果，规则抽取优先级更高
         llm_slots = llm_slot_plan.get("slots") or {}
-        merged_slots = {**llm_slots, **rule_slots}
+
+        #合并规则抽取的槽位和LLM补全的槽位，规则抽取的优先级更高
+        merged_slots = {**rule_slots, **llm_slots}
 
         return {
             "search_slots": merged_slots,

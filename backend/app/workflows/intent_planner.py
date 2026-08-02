@@ -15,7 +15,7 @@ DIRECT_RULE_TOOLS = {
 
 
 class IntentPlanner:
-    """负责把用户消息转换成下一步要执行的业务意图和工具参数。"""
+    """Plan the next business intent and tool arguments from user input."""
 
     def __init__(
         self,
@@ -23,13 +23,12 @@ class IntentPlanner:
         intent_parser: IntentParser,
         tool_registry: Any,
     ) -> None:
-        """保存规则解析器、LLM 客户端和 Skill Registry 代理。"""
         self.agent_llm_client = agent_llm_client
         self.intent_parser = intent_parser
         self.tool_registry = tool_registry
 
     async def plan(self, state: AgentState) -> dict[str, Any]:
-        """按“规则优先、LLM 补充、规则兜底”的顺序规划意图。"""
+        """Use direct rules first, then one structured LLM parse, then rule fallback."""
         missing_error = missing_required_field(state)
         if missing_error:
             return {
@@ -52,14 +51,13 @@ class IntentPlanner:
             session_id=session_id,
         )
 
-        #规则关键词优先，如果规则解析已经足够明确，就直接执行，避免不必要的 LLM 调用，
-        #提升效率和稳定性。只有当规则解析无法明确意图时，才调用 LLM 做进一步分析和判断。
         direct_result = self._try_rule_direct_intent(parsed, state)
         if direct_result is not None:
             return direct_result
 
-        #规则化无法识别，或者识别到的工具需要进一步补齐参数，就调用 LLM 做上下文解析和意图判断，提升理解能力和灵活性。
         llm_parsed_context = await self._extract_llm_context(state)
+
+        #下面_select_from_llm_context的作用是根据llm_parsed_context和parsed来选择最终的意图和参数
         selected = self._select_from_llm_context(
             llm_parsed_context=llm_parsed_context,
             parsed=parsed,
@@ -67,8 +65,7 @@ class IntentPlanner:
             session_id=session_id,
         )
 
-        #如果LLM也无法解析出意图，就直接使用上一轮规则解析的结果（可能是 None），
-        #让后续节点来处理，保证流程的鲁棒性。
+        #如果llm_parsed_context和parsed都没有提供明确的意图，那么就尝试从pending_slots中选择意图
         if selected is None:
             selected = self._select_from_pending_slots(
                 state=state,
@@ -78,16 +75,10 @@ class IntentPlanner:
                 session_id=session_id,
             )
 
-        #如果用户在补齐搜索工具的槽位，就直接继续搜索，不需要再经过一次 LLM 选择，提升效率和用户体验。
-        if selected is None:
-            selected = await self._select_by_llm_tool_call(state)
-
-        #如果LLM 选择工具也失败了，就退回到规则解析的结果（可能是 None），最终兜底到 fallback 节点，保证流程的鲁棒性和可解释性。
-        #用户可以通过查看 llm_parsed_context 来理解 LLM 的分析结果，或者通过查看 parsed 来理解规则解析的结果。
+        #如果selected仍然为None，那么就使用parsed作为最终的意图和参数
         if selected is None:
             selected = parsed
 
-        #如果所有方法都没有选出明确的工具，就进入 fallback，保证流程的鲁棒性。
         if selected is None:
             return {
                 "intent": "fallback",
@@ -95,7 +86,7 @@ class IntentPlanner:
                 "llm_parsed_context": llm_parsed_context,
             }
 
-        #如果选出了明确的工具，就提取工具参数，准备执行。工具参数的准备可能涉及一些通用的衍生计算，
+        #如果selected不为None，那么就使用selected中的tool_name和arguments作为最终的意图和参数
         tool_name = selected.get("tool_name") or "fallback"
         arguments = self.tool_registry.prepare_arguments(
             tool_name=tool_name,
@@ -103,8 +94,6 @@ class IntentPlanner:
             state=state,
         )
 
-        #最终更新state 的 intent 字段为工具名，planned_tool_args 字段为准备好的参数，
-        # llm_parsed_context 字段为 LLM 解析结果（可能是 None），供后续节点使用。
         return {
             "intent": tool_name,
             "planned_tool_args": arguments,
@@ -116,7 +105,7 @@ class IntentPlanner:
         parsed: dict[str, Any] | None,
         state: AgentState,
     ) -> dict[str, Any] | None:
-        """处理规则解析已经足够明确的意图，减少不必要的 LLM 调用。"""
+        """Return immediately for high-confidence rule intents."""
         if not parsed:
             return None
 
@@ -138,7 +127,7 @@ class IntentPlanner:
         self,
         state: AgentState,
     ) -> dict[str, Any] | None:
-        """调用 LLM 做轻量结构化解析，失败时返回 None。"""
+        """Call the structured context parser once for intent and slot extraction."""
         try:
             context = await self.agent_llm_client.extract_message_context(
                 message=state.get("message") or "",
@@ -160,7 +149,7 @@ class IntentPlanner:
         user_id: str | None,
         session_id: str | None,
     ) -> dict[str, Any] | None:
-        """根据 LLM 结构化解析结果直接选出高置信意图。"""
+        """Map the structured LLM intent to a business tool."""
         llm_intent = (
             llm_parsed_context.get("intent")
             if isinstance(llm_parsed_context, dict)
@@ -187,7 +176,7 @@ class IntentPlanner:
         user_id: str | None,
         session_id: str | None,
     ) -> dict[str, Any] | None:
-        """如果上一轮在追问，本轮补齐地址或位置时直接继续搜索。"""
+        """Continue a pending restaurant search when the user supplies location."""
         pending_slots = state.get("short_term_memory", {}).get("pending_search_slots")
         if not isinstance(pending_slots, dict):
             return None
@@ -205,33 +194,12 @@ class IntentPlanner:
 
         return None
 
-    async def _select_by_llm_tool_call(
-        self,
-        state: AgentState,
-    ) -> dict[str, Any] | None:
-        """让 LLM 在业务级工具列表中选择工具，不暴露 MCP 原子工具。"""
-        try:
-            return await self.agent_llm_client.select_tool(
-                message=state.get("message") or "",
-                user_id=state.get("user_id"),
-                session_id=state.get("session_id"),
-                short_term_memory=state.get("short_term_memory", {}),
-                long_term_memory={
-                    **state.get("long_term_memory", {}),
-                    "current_location": state.get("location"),
-                    "location_label": state.get("location_label"),
-                },
-                tools=self.tool_registry.openai_tool_definitions(),
-            )
-        except Exception:
-            return None
-
     @classmethod
     def _normalize_llm_parsed_context(
         cls,
         context: dict[str, Any] | None,
     ) -> dict[str, Any] | None:
-        """清洗 LLM 解析结果，避免异常字段污染 Workflow state。"""
+        """Normalize LLM output before writing it into workflow state."""
         if not isinstance(context, dict):
             return None
 

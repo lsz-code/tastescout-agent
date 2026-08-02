@@ -101,6 +101,7 @@ class ShortTermMemory:
     def _prune_memory(cls, data: dict[str, Any]) -> dict[str, Any]:
         memory = dict(data or {})
 
+        #首先将候选餐厅列表进行归一化处理，限制数量
         candidates = memory.get("current_candidates")
         if isinstance(candidates, list):
             memory["current_candidates"] = [
@@ -109,6 +110,7 @@ class ShortTermMemory:
                 if isinstance(item, dict)
             ]
 
+        #然后将历史推荐过的餐厅id列表进行去重和限制数量
         recommended_poi_ids = memory.get("recommended_poi_ids")
         if isinstance(recommended_poi_ids, list):
             memory["recommended_poi_ids"] = cls._limit_unique_strings(
@@ -116,6 +118,7 @@ class ShortTermMemory:
                 MAX_RECOMMENDED_POI_IDS,
             )
 
+        #最后将搜索上下文和待补槽位进行归一化处理,只保留允许的字段，并限制文本长度
         last_search_context = memory.get("last_search_context")
         if isinstance(last_search_context, dict):
             memory["last_search_context"] = cls._normalize_search_context(
@@ -128,6 +131,7 @@ class ShortTermMemory:
                 pending_search_slots
             )
 
+        #限制当前地址、搜索关键词和搜索查询的文本长度，避免过长的文本占用过多内存
         for field in (
             "current_address",
             "current_search_keyword",
@@ -191,6 +195,7 @@ class ShortTermMemory:
 
     @classmethod
     def _normalize_search_context(cls, context: dict[str, Any]) -> dict[str, Any]:
+        """归一化搜索上下文和待补槽位，限制字段和文本长度。"""
         normalized: dict[str, Any] = {}
         for field in (
             "address",

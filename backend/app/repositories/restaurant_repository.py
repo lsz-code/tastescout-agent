@@ -12,20 +12,21 @@ from app.models.user import User
 class RestaurantRepository:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
-    # 获取用户信息
+
     async def get_user_by_user_id(self, user_id: str) -> User | None:
+        """根据用户ID获取用户信息"""
         result = await self.db.execute(select(User).where(User.user_id == user_id))
         return result.scalar_one_or_none()
 
-    # 根据POI ID获取餐厅信息
     async def get_by_poi_id(self, poi_id: str) -> Restaurant | None:
+        """根据POI ID获取餐厅信息"""
         result = await self.db.execute(
             select(Restaurant).where(Restaurant.poi_id == poi_id)
         )
         return result.scalar_one_or_none()
 
-    # 根据POI ID获取餐厅评论信息
     async def get_detail_by_poi_id(self, poi_id: str) -> Restaurant | None:
+        """获取餐厅详细信息，包括评论和评论用户信息"""
         result = await self.db.execute(
             select(Restaurant)
             .options(selectinload(Restaurant.reviews).selectinload(Review.user))
@@ -33,19 +34,19 @@ class RestaurantRepository:
         )
         return result.scalar_one_or_none()
 
-    # 创建餐厅记录
     async def create_restaurant(self, **values) -> Restaurant:
+        """创建餐厅记录，并提交到数据库"""
         restaurant = Restaurant(**values)
         self.db.add(restaurant)
         await self.db.flush()
         return restaurant
 
-    # 通过餐厅和用户ID获取评论信息
     async def get_review_by_restaurant_and_user(
         self,
         restaurant_id: int,
         user_db_id: int,
     ) -> Review | None:
+        """根据餐厅ID和用户数据库ID获取评论记录"""
         result = await self.db.execute(
             select(Review).where(
                 Review.restaurant_id == restaurant_id,
@@ -54,7 +55,6 @@ class RestaurantRepository:
         )
         return result.scalar_one_or_none()
 
-    #创建评论记录，提交到数据库
     async def create_review(
         self,
         restaurant_id: int,
@@ -62,6 +62,7 @@ class RestaurantRepository:
         content: str,
         rating: float | None,
     ) -> Review:
+        """创建评论记录，并提交到数据库"""
         review = Review(
             restaurant_id=restaurant_id,
             user_id=user_db_id,

@@ -316,15 +316,18 @@ class RestaurantSearchService:
         restaurants: list[RestaurantSearchItem],
         existing_recommended_poi_ids: list[str],
     ) -> None:
+        #构建候选餐厅列表
         candidates = [
             self._build_memory_candidate(item)
             for item in restaurants[:MAX_CURRENT_CANDIDATES]
         ]
+        #合并历史推荐过的餐厅id列表和当前搜索结果的餐厅id列表，去重
         current_poi_ids = [
             item.poi_id
             for item in restaurants
             if item.poi_id
         ]
+        #合并历史推荐过的餐厅id列表和当前搜索结果的餐厅id列表，去重
         recommended_poi_ids = self._merge_poi_ids(
             existing_recommended_poi_ids=existing_recommended_poi_ids,
             current_poi_ids=current_poi_ids,
@@ -356,7 +359,7 @@ class RestaurantSearchService:
                     "limit": payload.limit,
                     "filters": payload.filters.model_dump() if payload.filters else {},
                 },
-                "last_intent": "search_food",
+                "last_intent": "search_restaurants",
             },
         )
 

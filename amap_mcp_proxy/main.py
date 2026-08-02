@@ -98,6 +98,8 @@ async def place_detail(payload: PlaceDetailRequest) -> dict[str, Any]:
 #工具调用统一封装，使用AMAP_MCP_URL通过streamable_http_client调用高德MCP工具
 #根据工具名称和参数调用工具，并处理超时、HTTP错误、以及工具返回的错误信息
 async def _call_tool(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+
+    #建立与MCP代理的HTTP连接，并使用ClientSession调用指定工具，传入参数，并等待结果返回
     try:
         async with asyncio.timeout(settings.MCP_TIMEOUT_SECONDS):
             async with streamable_http_client(settings.AMAP_MCP_URL) as (

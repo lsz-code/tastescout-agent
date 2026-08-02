@@ -20,7 +20,7 @@ flowchart LR
     AS --> LG[LangGraph AgentWorkflow]
 
     LG --> LLM[OpenAI 兼容 LLM]
-    LG --> SK[Skill Registry]
+    LG --> SK[业务 Tool Registry<br/>代码名 SkillRegistry]
     LG <--> STM[(Redis 短期记忆)]
     LG <--> LTM[(PostgreSQL 长期记忆)]
 
@@ -57,7 +57,7 @@ flowchart LR
 │       ├── api/v1/             # FastAPI 路由层
 │       ├── workflows/          # LangGraph State、Node、Graph 与规划器
 │       ├── agent/              # LLM、规则意图解析、槽位工具和工具门面
-│       ├── skills/             # Agent 可执行的业务能力
+│       ├── skills/             # Agent 可调用的业务级 Tool（代码类名为 Skill）
 │       ├── services/           # 餐厅、收藏、记忆、排序等业务逻辑
 │       ├── repositories/       # SQLAlchemy 数据访问
 │       ├── models/             # SQLAlchemy ORM 模型
@@ -80,13 +80,13 @@ flowchart LR
 | API | `backend/app/api/v1` | 校验 HTTP 输入、注入数据库与 Redis 依赖、返回响应模型 |
 | Workflow | `backend/app/workflows` | 用 LangGraph 编排记忆、意图、槽位、工具和回复流程 |
 | Agent | `backend/app/agent` | 调用 LLM、规则化识别意图、处理槽位、暴露工具注册门面 |
-| Skill | `backend/app/skills` | 把 Agent 意图转换为明确、可执行的业务能力 |
+| 业务 Tool | `backend/app/skills` | 把 Agent 意图转换为可执行能力；代码中的抽象类命名为 `Skill` |
 | Service | `backend/app/services` | 实现搜索、排序、收藏、记忆刷新等业务用例 |
 | Repository | `backend/app/repositories` | 封装 SQLAlchemy 查询和持久化操作 |
 | Model / Schema | `backend/app/models`、`schemas` | 分别描述数据库实体和 API/服务数据结构 |
 | Adapter | `backend/app/mcp`、`amap_mcp_proxy` | 隔离外部高德 MCP 协议与业务层 |
 
-这个分层的关键点是：LangGraph 负责“下一步做什么”，Skill 负责“调用哪项业务能力”，Service 和 Repository 负责“具体怎样完成”。
+这个分层的关键点是：LangGraph 负责“下一步做什么”，业务 Tool（代码名 `Skill`）负责“调用哪项业务能力”，Service 和 Repository 负责“具体怎样完成”。
 
 ## 4. 一次 Agent 请求的调用链
 
@@ -99,7 +99,7 @@ sequenceDiagram
     participant AS as AgentService
     participant WF as AgentWorkflow
     participant N as Workflow Nodes
-    participant SK as Skill Registry
+    participant SK as 业务 Tool Registry（SkillRegistry）
     participant S as Services
 
     FE->>API: AgentChatRequest
@@ -107,7 +107,7 @@ sequenceDiagram
     AS->>WF: run(user, session, message, location)
     WF->>N: graph.ainvoke(initial_state)
     N->>SK: execute_tool(...)
-    SK->>S: Skill.run(...)
+    SK->>S: Tool.run(...)（代码为 Skill.run）
     S-->>SK: 业务结果
     SK-->>N: tool_result
     N-->>WF: final state
@@ -133,7 +133,7 @@ LangGraph 的三个核心概念在本项目中分别对应：
 | LangGraph 概念 | 项目实现 |
 | --- | --- |
 | State | `AgentState`，定义整次图执行共享的数据结构 |
-| Node | `AgentWorkflowNodes` 的异步方法，以及它们委托的 Planner/Skill |
+| Node | `AgentWorkflowNodes` 的异步方法，以及它们委托的 Planner/业务 Tool |
 | Graph | `AgentWorkflow.build_graph()` 中的节点注册、边和条件路由 |
 
 ### 5.1 State：一次图执行的共享上下文
@@ -170,7 +170,7 @@ State 字段可以按职责分为六组：
 
 ### 5.2 Node：对 State 进行局部变换
 
-所有图节点都注册自 [`backend/app/workflows/nodes.py`](backend/app/workflows/nodes.py) 中的 `AgentWorkflowNodes`。这个类是“节点适配层”：简单节点把工作委托给专门 Planner，业务节点统一委托给 Skill Registry。
+所有图节点都注册自 [`backend/app/workflows/nodes.py`](backend/app/workflows/nodes.py) 中的 `AgentWorkflowNodes`。这个类是“节点适配层”：简单节点把工作委托给专门 Planner，业务节点统一委托给业务 Tool Registry（代码类名为 `SkillRegistry`）。
 
 | 图节点 | 实际方法或组件 | 主要读取 | 主要写入 |
 | --- | --- | --- | --- |
@@ -191,10 +191,10 @@ State 字段可以按职责分为六组：
 `_run_tool()` 是业务节点的统一执行模板：
 
 1. 检查 State 中的必填字段。
-2. 调用 Skill 的 `prepare_arguments()`，把 State 与意图参数合并成最终参数。
+2. 调用业务 Tool 的 `prepare_arguments()`，把 State 与意图参数合并成最终参数。
 3. 记录一条 `tool_call`。
-4. 调用 Skill Registry 的 `execute_tool()`。
-5. 使用 Skill 的 `build_data()` 整理前端所需数据。
+4. 调用业务 Tool Registry 的 `execute_tool()`。
+5. 使用业务 Tool 的 `build_data()` 整理前端所需数据。
 6. 成功时写入 `tool_result` 和 `data`；异常时写入 `error`，但不让整张图直接崩溃。
 
 ### 5.3 Graph：节点、边和条件路由
@@ -258,7 +258,7 @@ flowchart TD
 5. 如果 LLM 判断为餐厅搜索或闲聊，映射到对应业务意图。
 6. 如果 Redis 中存在 `pending_search_slots`，判断本轮是否是在补充上轮信息。
 7. 最后回退到规则结果或 `fallback`。
-8. 通过 Skill Registry 的 `prepare_arguments()` 形成 `planned_tool_args`。
+8. 通过业务 Tool Registry 的 `prepare_arguments()` 形成 `planned_tool_args`。
 
 因此 LLM 负责增强理解，但规则路径和兜底路径仍然可以让工作流在 LLM 不可用时继续运行。
 
@@ -274,13 +274,30 @@ flowchart TD
 
 当前 `SearchSlotPlanner.extract()` 的实际合并表达式是 `{**rule_slots, **llm_slots}`，因此同名字段冲突时 LLM 槽位会覆盖规则槽位。代码注释写的是“规则优先”，两者并不一致；后续若严格要求规则优先，应调整合并顺序或增加明确的冲突策略。
 
-## 7. Skill、Service 与工具执行
+## 7. 业务 Tool、Service 与工具执行
 
-Skill 是 LangGraph 节点与业务 Service 之间的适配层。统一基类位于 [`backend/app/skills/base.py`](backend/app/skills/base.py)，注册器位于 [`backend/app/skills/registry.py`](backend/app/skills/registry.py)，对 Workflow 暴露的门面位于 [`backend/app/agent/tool_registry.py`](backend/app/agent/tool_registry.py)。
+本项目代码中的 `Skill` 本质上就是 Agent 可调用的业务级 Tool。之所以使用 `Skill` 作为类名，是因为它不仅包含 Tool 的名称、参数 Schema 和执行函数，还封装了参数准备、槽位处理、追问、结果格式化与兜底回复。
 
-当前注册了五项 Skill：
+可以用下面的等式理解：
 
-| Skill 名称 | 实现 | 下游能力 |
+> `Skill = 业务级 Tool + 参数/槽位处理 + 结果与回复适配`
+
+统一基类位于 [`backend/app/skills/base.py`](backend/app/skills/base.py)，注册器位于 [`backend/app/skills/registry.py`](backend/app/skills/registry.py)，对 Workflow 暴露的 Tool 门面位于 [`backend/app/agent/tool_registry.py`](backend/app/agent/tool_registry.py)。
+
+代码字段与 Tool 概念的对应关系如下：
+
+| 代码实现 | Tool 语义 |
+| --- | --- |
+| `Skill.name` | Tool 名称，也是 State 中的业务意图名称 |
+| `Skill.parameters` | LLM function calling 使用的参数 Schema |
+| `Skill.to_openai_tool()` | 把 Skill 转换为 OpenAI 兼容 Tool 定义 |
+| `Skill.run()` | Tool 的实际执行函数 |
+| `SkillRegistry` | Tool Registry，负责注册、查找和执行 Tool |
+| `tool_registry.py` | Workflow 使用的 Tool 调用门面 |
+
+当前注册了五项业务 Tool：
+
+| Tool 名称 | 实现类 | 下游能力 |
 | --- | --- | --- |
 | `search_restaurants` | `RestaurantSearchSkill` | 构造搜索请求并调用 `RestaurantSearchService` |
 | `add_favorite_by_rank` | `AddFavoriteByRankSkill` | 从 Redis 中最近推荐候选按排名收藏 |
@@ -288,13 +305,20 @@ Skill 是 LangGraph 节点与业务 Service 之间的适配层。统一基类位
 | `get_user_memory` | `GetUserMemorySkill` | 读取 PostgreSQL 长期记忆 |
 | `refresh_user_memory` | `RefreshUserMemorySkill` | 根据收藏和评价重新汇总长期记忆 |
 
-`casual_chat` 和 `fallback` 不是 Skill：闲聊直接由 `ResponsePlanner` 调用 LLM，兜底则直接写入 State。
+`casual_chat` 和 `fallback` 不是业务 Tool：闲聊直接由 `ResponsePlanner` 调用 LLM，兜底则直接写入 State。
 
-餐厅搜索 Skill 的下游执行链最完整：
+此外，业务 Tool 和高德 MCP Tool 不是同一层级：
+
+| Tool 层级 | 示例 | 粒度 |
+| --- | --- | --- |
+| Agent 业务级 Tool | `RestaurantSearchSkill` / `search_restaurants` | 面向用户目标，组合搜索、详情、排序和记忆等步骤 |
+| 外部 MCP 原子 Tool | `maps_geo`、`maps_around_search`、`maps_search_detail` | 面向单一外部接口操作 |
+
+餐厅搜索业务 Tool 的下游执行链最完整：
 
 ```mermaid
 flowchart LR
-    N[search_restaurants Node] --> SK[RestaurantSearchSkill]
+    N[search_restaurants Node] --> SK[RestaurantSearchSkill<br/>业务级 Tool]
     SK --> RS[RestaurantSearchService]
     RS --> MS[MemoryService]
     RS --> MCP[MCPService]
@@ -393,7 +417,7 @@ flowchart LR
 }
 ```
 
-最后 `generate_response` 使用 LLM 生成自然语言；如果 LLM 不可用，则使用 Skill 模板生成回复。
+最后 `generate_response` 使用 LLM 生成自然语言；如果 LLM 不可用，则使用业务 Tool 的模板生成回复。
 
 ### 9.4 缺少位置时
 
@@ -415,8 +439,8 @@ Graph 会路由到 `ask_followup`，生成“你想在哪个区域找？”之�
 
 - `MemoryLoader` 读取 Redis/PostgreSQL 失败时写入空记忆和错误。
 - `IntentPlanner` 看到已有错误时把意图改为 `fallback`。
-- `_run_tool()` 捕获 Skill/Service 异常，记录失败的 `tool_call` 和错误文本。
-- `ResponsePlanner.generate()` 在无错误时优先尝试 LLM；失败后使用 Skill 模板；再失败则使用通用中文提示。
+- `_run_tool()` 捕获业务 Tool/Service 异常，记录失败的 `tool_call` 和错误文本。
+- `ResponsePlanner.generate()` 在无错误时优先尝试 LLM；失败后使用业务 Tool 模板；再失败则使用通用中文提示。
 - 追问节点已经生成 `reply` 时，`generate_response` 会直接保留已有回复，不重复调用 LLM。
 
 这种设计让大多数业务故障能以可读响应结束图执行，但 API 层仍应配合日志、监控和更细粒度的异常分类。
@@ -425,8 +449,8 @@ Graph 会路由到 `ask_followup`，生成“你想在哪个区域找？”之�
 
 如果要加入“按时间预订餐厅”之类的新能力，通常需要：
 
-1. 在 `backend/app/skills` 新建 Skill，实现 `name`、参数 Schema、`run()`、参数准备和回复模板。
-2. 在 `tool_registry._build_registry()` 注册新 Skill，使 LLM 和 Workflow 能找到它。
+1. 在 `backend/app/skills` 新建业务 Tool 类（继承 `Skill`），实现 `name`、参数 Schema、`run()`、参数准备和回复模板。
+2. 在 `tool_registry._build_registry()` 注册新业务 Tool，使 LLM 和 Workflow 能找到它。
 3. 在 `IntentParser` 或 `IntentPlanner` 中增加意图识别与参数规划。
 4. 在 `AgentWorkflowNodes` 增加一个调用 `_run_tool()` 的节点方法。
 5. 在 `AgentWorkflow.build_graph()` 注册 Node，并在 `_route_by_intent()` 增加路由。
@@ -434,7 +458,7 @@ Graph 会路由到 `ask_followup`，生成“你想在哪个区域找？”之�
 7. 在 Service/Repository 层实现业务逻辑与持久化。
 8. 增加 API、Schema 和前端展示；使用 `/workflow/debug-agent` 检查完整 State 演进。
 
-如果新能力能完全复用现有通用工具节点，也可以进一步把“意图到节点”的映射数据化，减少每增加一个 Skill 都修改 Graph 代码的成本。
+如果新能力能完全复用现有通用工具节点，也可以进一步把“意图到节点”的映射数据化，减少每增加一个业务 Tool 都修改 Graph 代码的成本。
 
 ## 12. 关键文件索引
 
@@ -451,9 +475,9 @@ Graph 会路由到 `ask_followup`，生成“你想在哪个区域找？”之�
 | 槽位规划 | [`backend/app/workflows/search_slot_planner.py`](backend/app/workflows/search_slot_planner.py) |
 | 回复规划 | [`backend/app/workflows/response_planner.py`](backend/app/workflows/response_planner.py) |
 | LLM 客户端 | [`backend/app/agent/llm_client.py`](backend/app/agent/llm_client.py) |
-| Skill 门面与注册 | [`backend/app/agent/tool_registry.py`](backend/app/agent/tool_registry.py) |
-| Skill 基类 | [`backend/app/skills/base.py`](backend/app/skills/base.py) |
-| 餐厅搜索 Skill | [`backend/app/skills/restaurant_search/skill.py`](backend/app/skills/restaurant_search/skill.py) |
+| 业务 Tool 门面与注册 | [`backend/app/agent/tool_registry.py`](backend/app/agent/tool_registry.py) |
+| 业务 Tool 基类（`Skill`） | [`backend/app/skills/base.py`](backend/app/skills/base.py) |
+| 餐厅搜索业务 Tool | [`backend/app/skills/restaurant_search/skill.py`](backend/app/skills/restaurant_search/skill.py) |
 | 餐厅搜索 Service | [`backend/app/services/restaurant_search_service.py`](backend/app/services/restaurant_search_service.py) |
 | Redis 短期记忆 | [`backend/app/memory/short_term.py`](backend/app/memory/short_term.py) |
 | 高德 MCP HTTP 代理 | [`amap_mcp_proxy/main.py`](amap_mcp_proxy/main.py) |

@@ -93,7 +93,7 @@ class MCPService:
             raw=raw,
         )
 
-    #位置信息标准化，适配不同接口返回的格式差异
+    #餐馆信息标准化，适配不同接口返回的格式差异
     def _normalize_poi(self, poi: dict[str, Any]) -> dict[str, Any]:
         category = poi.get("type") or poi.get("typecode")
 

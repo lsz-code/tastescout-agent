@@ -26,7 +26,7 @@ class MemoryService:
         self.memory_repository = MemoryRepository(db)
         self.memory_cot_service = MemoryCOTService()
     
-    #获取长期记忆，构建搜索上下文
+    #获取长期记忆
     async def get_long_term_memory(self, user_id: str) -> LongTermMemoryResponse:
         try:
             user = await self._get_existing_user(user_id)
